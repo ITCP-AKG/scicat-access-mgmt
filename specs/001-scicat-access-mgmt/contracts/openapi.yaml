@@ -1,0 +1,418 @@
+openapi: 3.0.3
+info:
+  title: SciCat Access Management API
+  version: 1.0.0
+  description: >
+    Backend API for the SciCat Access Management app. Source of truth for managed
+    groups, memberships, resource grants, transfer rules and audit; projects
+    effective access groups into SciCat. All endpoints require a SciCat JWT
+    Bearer token; mutating endpoints require admin or group-manager authorization.
+servers:
+  - url: /api/v1
+security:
+  - scicatJwt: []
+tags:
+  - name: groups
+  - name: memberships
+  - name: users
+  - name: grants
+  - name: projection
+  - name: transfers
+  - name: expiry
+  - name: audit
+
+paths:
+  # ---- Groups ----
+  /groups:
+    get:
+      tags: [groups]
+      summary: List groups
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [active, retired] } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Group' } } } } } }
+    post:
+      tags: [groups]
+      summary: Create a group
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/GroupCreate' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Group' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }     # reserved/duplicate name
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /groups/{name}:
+    parameters: [ { name: name, in: path, required: true, schema: { type: string } } ]
+    get:
+      tags: [groups]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/GroupDetail' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+    patch:
+      tags: [groups]
+      summary: Update description/category/managers/status
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/GroupUpdate' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Group' } } } } }
+    delete:
+      tags: [groups]
+      parameters: [ { name: cascade, in: query, schema: { type: boolean, default: false } } ]
+      responses:
+        '204': { description: Deleted }
+        '409': { $ref: '#/components/responses/Conflict' }     # still referenced, cascade required
+
+  # ---- Memberships ----
+  /groups/{name}/members:
+    parameters: [ { name: name, in: path, required: true, schema: { type: string } } ]
+    get:
+      tags: [memberships]
+      summary: List a group's members
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Membership' } } } } } }
+    post:
+      tags: [memberships]
+      summary: Add a member (optionally time-bounded)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/MembershipCreate' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Membership' } } } }
+        '422': { description: Validation error (e.g. last-admin lockout) }
+  /memberships/{id}:
+    parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+    patch:
+      tags: [memberships]
+      summary: Update temporal window / status
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/MembershipUpdate' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Membership' } } } } }
+    delete:
+      tags: [memberships]
+      summary: Revoke membership
+      responses: { '204': { description: Revoked } }
+
+  # ---- Users / directory ----
+  /users:
+    get:
+      tags: [users]
+      summary: Search directory users
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: name/username/email substring }
+        - { name: limit, in: query, schema: { type: integer, default: 25 } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/DirectoryUser' } } } } } }
+  /users/{userId}/groups:
+    parameters: [ { name: userId, in: path, required: true, schema: { type: string } } ]
+    get:
+      tags: [users]
+      summary: Groups a user belongs to
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Membership' } } } } } }
+  /users/{userId}/deactivate:
+    parameters: [ { name: userId, in: path, required: true, schema: { type: string } } ]
+    post:
+      tags: [users]
+      summary: Mark a user as departed; triggers ownership transfer per rules
+      responses: { '202': { description: Accepted, content: { application/json: { schema: { $ref: '#/components/schemas/TransferBatchResult' } } } } }
+
+  # ---- Resource grants ----
+  /grants:
+    get:
+      tags: [grants]
+      parameters:
+        - { name: groupName, in: query, schema: { type: string } }
+        - { name: resourceType, in: query, schema: { $ref: '#/components/schemas/ResourceType' } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ResourceGrant' } } } } } }
+    post:
+      tags: [grants]
+      summary: Apply a group to one or many resources (bulk)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/GrantApply' } } } }
+      responses: { '207': { description: Multi-status per-item result, content: { application/json: { schema: { $ref: '#/components/schemas/BulkResult' } } } } }
+  /grants/{id}:
+    parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+    delete:
+      tags: [grants]
+      summary: Remove a grant (withdraws from SciCat resource)
+      responses: { '204': { description: Removed } }
+  /resources/{resourceType}:
+    parameters: [ { name: resourceType, in: path, required: true, schema: { $ref: '#/components/schemas/ResourceType' } } ]
+    get:
+      tags: [grants]
+      summary: Browse SciCat resources (proxy, for the assignment UI)
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: ownerGroup, in: query, schema: { type: string } }
+        - { name: skip, in: query, schema: { type: integer, default: 0 } }
+        - { name: limit, in: query, schema: { type: integer, default: 50 } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ResourcePage' } } } } }
+
+  # ---- Projection / sync ----
+  /projection/run:
+    post:
+      tags: [projection]
+      summary: Project effective access for a user, a group's users, or all
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/ProjectionRequest' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SyncResult' } } } } }
+  /projection/reconcile:
+    post:
+      tags: [projection]
+      summary: Full reconciliation; reports drift and applies fixes
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SyncResult' } } } } }
+  /projection/status:
+    get:
+      tags: [projection]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SyncResult' } } } } }
+
+  # ---- Transfers ----
+  /transfer-rules:
+    get: { tags: [transfers], responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/TransferRule' } } } } } } }
+    post:
+      tags: [transfers]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TransferRuleCreate' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/TransferRule' } } } } }
+  /transfer-rules/{id}:
+    parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+    patch: { tags: [transfers], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TransferRuleCreate' } } } }, responses: { '200': { description: OK } } }
+    delete: { tags: [transfers], responses: { '204': { description: Deleted } } }
+  /transfer-records:
+    get:
+      tags: [transfers]
+      parameters:
+        - { name: fromUserId, in: query, schema: { type: string } }
+        - { name: outcome, in: query, schema: { type: string } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/TransferRecord' } } } } } }
+
+  # ---- Expiry dashboard ----
+  /expiry:
+    get:
+      tags: [expiry]
+      summary: Upcoming and recently-lapsed memberships/grants
+      parameters: [ { name: withinDays, in: query, schema: { type: integer, default: 30 } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ExpiryDashboard' } } } } }
+
+  # ---- Audit ----
+  /audit:
+    get:
+      tags: [audit]
+      parameters:
+        - { name: actor, in: query, schema: { type: string } }
+        - { name: entityType, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: skip, in: query, schema: { type: integer, default: 0 } }
+        - { name: limit, in: query, schema: { type: integer, default: 100 } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } } } } } }
+
+  # ---- Session ----
+  /me:
+    get:
+      tags: [users]
+      summary: Current admin identity + effective roles (admin / group-manager-of)
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } } } }
+
+components:
+  securitySchemes:
+    scicatJwt: { type: http, scheme: bearer, bearerFormat: JWT }
+  responses:
+    Forbidden: { description: Not authorized }
+    NotFound: { description: Not found }
+    Conflict: { description: Conflict (reserved/duplicate name or still referenced) }
+  schemas:
+    ResourceType: { type: string, enum: [dataset, origdatablock, proposal, sample, instrument, job] }
+    TemporalWindow:
+      type: object
+      properties:
+        effectiveFrom: { type: string, format: date-time, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+    Group:
+      type: object
+      required: [name, category, status]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        category: { type: string, enum: [research-group, project, proposal, instrument, other] }
+        managers: { type: array, items: { type: string } }
+        status: { type: string, enum: [active, retired] }
+        createdAt: { type: string, format: date-time }
+        createdBy: { type: string }
+        modifiedAt: { type: string, format: date-time }
+        modifiedBy: { type: string }
+    GroupDetail:
+      allOf:
+        - $ref: '#/components/schemas/Group'
+        - type: object
+          properties:
+            memberCount: { type: integer }
+            grantCount: { type: integer }
+    GroupCreate:
+      type: object
+      required: [name, category]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        category: { type: string }
+        managers: { type: array, items: { type: string } }
+    GroupUpdate:
+      type: object
+      properties:
+        description: { type: string }
+        category: { type: string }
+        managers: { type: array, items: { type: string } }
+        status: { type: string, enum: [active, retired] }
+    DirectoryUser:
+      type: object
+      properties:
+        userId: { type: string }
+        username: { type: string }
+        displayName: { type: string }
+        email: { type: string }
+        accessGroups: { type: array, items: { type: string } }
+        active: { type: boolean }
+    Membership:
+      type: object
+      properties:
+        id: { type: string }
+        groupName: { type: string }
+        userId: { type: string }
+        userDisplay: { type: string }
+        effectiveFrom: { type: string, format: date-time, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        status: { type: string, enum: [active, scheduled, expired, revoked] }
+        addedAt: { type: string, format: date-time }
+        addedBy: { type: string }
+    MembershipCreate:
+      type: object
+      required: [userId]
+      properties:
+        userId: { type: string }
+        effectiveFrom: { type: string, format: date-time, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+    MembershipUpdate:
+      allOf:
+        - $ref: '#/components/schemas/TemporalWindow'
+    ResourceGrant:
+      type: object
+      properties:
+        id: { type: string }
+        groupName: { type: string }
+        resourceType: { $ref: '#/components/schemas/ResourceType' }
+        resourceId: { type: string }
+        mode: { type: string, enum: [owner, access] }
+        effectiveFrom: { type: string, format: date-time, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        status: { type: string, enum: [active, scheduled, expired, removed] }
+        previousOwnerGroup: { type: string, nullable: true }
+    GrantApply:
+      type: object
+      required: [groupName, resourceType, resourceIds, mode]
+      properties:
+        groupName: { type: string }
+        resourceType: { $ref: '#/components/schemas/ResourceType' }
+        resourceIds: { type: array, items: { type: string } }
+        mode: { type: string, enum: [owner, access] }
+        effectiveFrom: { type: string, format: date-time, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+    BulkResult:
+      type: object
+      properties:
+        total: { type: integer }
+        succeeded: { type: integer }
+        failed: { type: integer }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              resourceId: { type: string }
+              ok: { type: boolean }
+              error: { type: string, nullable: true }
+    ResourcePage:
+      type: object
+      properties:
+        total: { type: integer }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              label: { type: string }
+              ownerGroup: { type: string }
+              accessGroups: { type: array, items: { type: string } }
+    ProjectionRequest:
+      type: object
+      properties:
+        userId: { type: string, nullable: true }
+        groupName: { type: string, nullable: true }
+        all: { type: boolean, default: false }
+    SyncResult:
+      type: object
+      properties:
+        ranAt: { type: string, format: date-time }
+        usersUpdated: { type: integer }
+        drift:
+          type: array
+          items:
+            type: object
+            properties:
+              userId: { type: string }
+              expected: { type: array, items: { type: string } }
+              actual: { type: array, items: { type: string } }
+        errors: { type: array, items: { type: string } }
+    TransferRule:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        match:
+          type: object
+          properties:
+            userId: { type: string, nullable: true }
+            category: { type: string, nullable: true }
+            groupName: { type: string, nullable: true }
+        successorType: { type: string, enum: [user, group] }
+        successor: { type: string }
+        transferOwner: { type: boolean }
+        priority: { type: integer }
+        enabled: { type: boolean }
+    TransferRuleCreate:
+      allOf:
+        - $ref: '#/components/schemas/TransferRule'
+    TransferRecord:
+      type: object
+      properties:
+        id: { type: string }
+        batchId: { type: string }
+        triggerReason: { type: string, enum: [departure, expiry, manual] }
+        fromUserId: { type: string }
+        resourceType: { $ref: '#/components/schemas/ResourceType' }
+        resourceId: { type: string }
+        previousOwnerGroup: { type: string }
+        newOwnerGroup: { type: string }
+        ruleId: { type: string, nullable: true }
+        outcome: { type: string, enum: [transferred, pending_manual, failed] }
+        error: { type: string, nullable: true }
+        at: { type: string, format: date-time }
+        by: { type: string }
+    TransferBatchResult:
+      type: object
+      properties:
+        batchId: { type: string }
+        records: { type: array, items: { $ref: '#/components/schemas/TransferRecord' } }
+    ExpiryDashboard:
+      type: object
+      properties:
+        expiringSoon: { type: array, items: { $ref: '#/components/schemas/Membership' } }
+        recentlyExpired: { type: array, items: { $ref: '#/components/schemas/Membership' } }
+        expiringGrants: { type: array, items: { $ref: '#/components/schemas/ResourceGrant' } }
+    AuditEntry:
+      type: object
+      properties:
+        id: { type: string }
+        at: { type: string, format: date-time }
+        actor: { type: string }
+        actorKind: { type: string, enum: [user, system] }
+        action: { type: string }
+        entityType: { type: string }
+        entityId: { type: string }
+        summary: { type: string }
+        before: { type: object, nullable: true }
+        after: { type: object, nullable: true }
+    Me:
+      type: object
+      properties:
+        userId: { type: string }
+        username: { type: string }
+        currentGroups: { type: array, items: { type: string } }
+        isAdmin: { type: boolean }
+        managerOf: { type: array, items: { type: string } }

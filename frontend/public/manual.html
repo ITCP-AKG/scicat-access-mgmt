@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SciCat Access Management — User Manual</title>
+<style>
+  :root {
+    --blue: #1976d2;
+    --blue-dark: #115293;
+    --bg: #fafafa;
+    --ink: #1a2027;
+    --muted: #5f6b76;
+    --border: #e0e0e0;
+    --code-bg: #f4f6f8;
+    --warn: #ed6c02;
+    --ok: #2e7d32;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.6;
+  }
+  .wrap { display: flex; max-width: 1180px; margin: 0 auto; }
+  nav.toc {
+    position: sticky; top: 0; align-self: flex-start;
+    width: 260px; height: 100vh; overflow-y: auto;
+    padding: 24px 16px; border-right: 1px solid var(--border); background: #fff;
+  }
+  nav.toc h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 0 6px; }
+  nav.toc a { display: block; padding: 4px 8px; color: var(--ink); text-decoration: none; border-radius: 6px; font-size: 14px; }
+  nav.toc a:hover { background: var(--code-bg); }
+  main { flex: 1; min-width: 0; padding: 32px 40px 120px; }
+  header.hero { border-bottom: 2px solid var(--blue); padding-bottom: 16px; margin-bottom: 8px; }
+  header.hero h1 { margin: 0 0 4px; font-size: 30px; }
+  header.hero p { margin: 0; color: var(--muted); }
+  h2.sec { font-size: 23px; margin: 44px 0 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+  h3 { font-size: 18px; margin: 26px 0 6px; }
+  code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; font-size: 90%; font-family: "SF Mono", Menlo, Consolas, monospace; }
+  pre { background: var(--code-bg); padding: 14px 16px; border-radius: 8px; overflow-x: auto; border: 1px solid var(--border); }
+  pre code { background: none; padding: 0; }
+  .pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
+  .pill.admin { background: #e3f2fd; color: var(--blue-dark); }
+  .pill.mgr { background: #ede7f6; color: #5e35b1; }
+  .pill.any { background: #eceff1; color: #455a64; }
+  .steps { counter-reset: step; padding-left: 0; list-style: none; }
+  .steps > li { counter-increment: step; position: relative; padding: 6px 0 6px 40px; }
+  .steps > li::before {
+    content: counter(step); position: absolute; left: 0; top: 6px;
+    width: 26px; height: 26px; border-radius: 50%; background: var(--blue); color: #fff;
+    font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+  }
+  .callout { border-left: 4px solid var(--blue); background: #fff; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+  .callout.warn { border-color: var(--warn); }
+  .callout.tip { border-color: var(--ok); }
+  .callout b { display: block; margin-bottom: 2px; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; background: #fff; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; font-size: 14px; vertical-align: top; }
+  th { background: var(--code-bg); }
+  .example { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 4px 18px 14px; margin: 14px 0; }
+  .example > .tag { display: inline-block; margin: 12px 0 0; font-size: 12px; font-weight: 700; color: var(--blue-dark); text-transform: uppercase; letter-spacing: .05em; }
+  footer { color: var(--muted); font-size: 13px; margin-top: 60px; border-top: 1px solid var(--border); padding-top: 16px; }
+  a { color: var(--blue-dark); }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="toc">
+  <strong>Access Management</strong>
+  <h2>Basics</h2>
+  <a href="#intro">1. What this app does</a>
+  <a href="#signin">2. Signing in (SSO)</a>
+  <a href="#roles">3. Roles &amp; permissions</a>
+  <h2>Daily tasks</h2>
+  <a href="#groups">4. Groups</a>
+  <a href="#membership">5. Membership</a>
+  <a href="#projection">6. Projection to SciCat</a>
+  <a href="#grants">7. Resource grants</a>
+  <a href="#expiry">8. Expiry dashboard</a>
+  <a href="#transfers">9. Ownership transfer</a>
+  <a href="#audit">10. Audit log</a>
+  <h2>Reference</h2>
+  <a href="#glossary">Glossary</a>
+  <a href="#faq">Troubleshooting &amp; FAQ</a>
+</nav>
+
+<main>
+<header class="hero">
+  <h1>SciCat Access Management — User Manual</h1>
+  <p>The source of truth for access groups, membership, resource grants, expirations and ownership transfer across your SciCat instance.</p>
+</header>
+
+<p>Legend for who may perform an action:
+  <span class="pill admin">admin</span> SciCat administrators &nbsp;
+  <span class="pill mgr">group manager</span> a user listed as a manager of that group &nbsp;
+  <span class="pill any">any user</span> any signed-in user (read-only)
+</p>
+
+<!-- ───────────────────────── 1 ───────────────────────── -->
+<h2 class="sec" id="intro">1. What this app does</h2>
+<p>SciCat can store an access group on a user or a dataset, but it has no place to <em>manage</em> those
+groups — to say who belongs to a group, for how long, or what happens when someone leaves. This
+application fills that gap. It is the <strong>source of truth</strong>; it computes each person's effective
+access and writes it back into SciCat automatically.</p>
+<table>
+  <tr><th>You do this here…</th><th>…and the app does this to SciCat</th></tr>
+  <tr><td>Add Alice to group <code>catalysis-team</code></td><td>Writes <code>catalysis-team</code> into Alice's <code>UserIdentity.profile.accessGroups</code></td></tr>
+  <tr><td>Apply group <code>proposal-42</code> to 30 datasets</td><td>Adds it to each dataset's <code>accessGroups</code> (or sets <code>ownerGroup</code>)</td></tr>
+  <tr><td>Give a postdoc access until 31 Dec</td><td>Activates and then automatically revokes access on that date</td></tr>
+  <tr><td>Deactivate a departing user</td><td>Reassigns their owned datasets to a successor and logs every move</td></tr>
+</table>
+
+<!-- ───────────────────────── 2 ───────────────────────── -->
+<h2 class="sec" id="signin">2. Signing in (SSO)</h2>
+<p>Open the app and you are taken to the sign-in screen. Authentication is handled by SciCat, so you
+use the <strong>same institutional single sign-on (SSO)</strong> account you use for SciCat itself.</p>
+<ol class="steps">
+  <li>Click <strong>Sign in</strong> — you are redirected to your institution's SSO login.</li>
+  <li>Authenticate (username/password, 2FA, etc. as configured by your institution).</li>
+  <li>You return to the app, already signed in. Your name appears top-right, with <code>(admin)</code> if you are a SciCat administrator.</li>
+</ol>
+<div class="callout tip"><b>New users</b>
+First-time users who sign in via SSO are recognised automatically from their SciCat identity — there
+is no separate account to create here. What you can <em>do</em> depends on your role (next section).</div>
+<div class="callout"><b>Sessions</b>
+Your session uses your SciCat token. Use <strong>Sign out</strong> (top-right) on shared machines. If
+actions start returning "unauthorized", your token has expired — sign in again.</div>
+
+<!-- ───────────────────────── 3 ───────────────────────── -->
+<h2 class="sec" id="roles">3. Roles &amp; permissions</h2>
+<table>
+  <tr><th>Role</th><th>Can do</th></tr>
+  <tr><td><span class="pill admin">admin</span></td><td>Everything: create/delete any group, manage any membership, apply/remove grants, run projection &amp; reconcile, define transfer rules, deactivate users, and view the audit log.</td></tr>
+  <tr><td><span class="pill mgr">group manager</span></td><td>Manage membership and grants <em>for the groups they manage</em>. Managers are listed on each group (the <em>Managers</em> field).</td></tr>
+  <tr><td><span class="pill any">any user</span></td><td>Browse groups, members, a user's groups, the expiry dashboard and transfer history (read-only).</td></tr>
+</table>
+<div class="callout"><b>Why an action is greyed out or returns 403</b>
+Buttons that change data only appear for admins (and managers, where relevant). If you believe you
+should have access to a group, ask an admin to add you to that group's <em>Managers</em> list.</div>
+
+<!-- ───────────────────────── 4 ───────────────────────── -->
+<h2 class="sec" id="groups">4. Groups</h2>
+<p>Open <strong>Groups</strong> from the left nav. This is the registry of every managed access group.
+Each group's <code>name</code> is the exact string written into SciCat.</p>
+
+<h3>Create a group <span class="pill admin">admin</span></h3>
+<ol class="steps">
+  <li>Click <strong>New group</strong>.</li>
+  <li>Enter a <strong>Name</strong> (e.g. <code>catalysis-team-alpha</code>), pick a <strong>Category</strong>, add an optional <strong>Description</strong>.</li>
+  <li>Click <strong>Create</strong>. The group appears in the list.</li>
+</ol>
+<div class="example">
+  <span class="tag">Example</span>
+  <p>A new research group joins the lab. Create <code>research-group</code> category group
+  <code>schmidt-lab</code>, description "Prof. Schmidt's surface catalysis group". You can now add
+  members (§5) and grant it access to resources (§7).</p>
+</div>
+<div class="callout warn"><b>Reserved &amp; duplicate names are rejected</b>
+Names that collide with SciCat's special groups (<code>admin</code>, <code>globalaccess</code>, <code>all</code>,
+<code>ingestor</code>, <code>archivemanager</code>, …), with an existing group, or with a per-user group are
+refused with an explanatory error. Pick a distinct, descriptive name.</div>
+
+<h3>Edit, retire or delete a group <span class="pill admin">admin</span></h3>
+<p>Click a group row to open its detail page. From there you can edit the description/category/managers,
+retire it (keeps history, stops new use), or delete it.</p>
+<div class="callout warn"><b>Delete is guarded</b>
+If a group still has active members, active resource grants, or is referenced by a transfer rule,
+deletion is blocked. Confirm the impact warning to cascade (members revoked, grants withdrawn,
+referencing rules removed) — or clean those up first.</div>
+
+<!-- ───────────────────────── 5 ───────────────────────── -->
+<h2 class="sec" id="membership">5. Membership</h2>
+<p>Membership is who belongs to a group. Manage it from a group's detail page (<em>Members</em> panel),
+and review it per-person from the <strong>Users</strong> page.</p>
+
+<h3>Add a member <span class="pill admin">admin</span> <span class="pill mgr">group manager</span></h3>
+<ol class="steps">
+  <li>Open the group → <strong>Add member</strong>.</li>
+  <li>Search the directory in the <strong>user picker</strong> and select the person.</li>
+  <li>(Optional) set a <strong>time window</strong> — see below. Leave blank for indefinite access.</li>
+  <li>Click <strong>Add</strong>. The change is projected to SciCat immediately.</li>
+</ol>
+
+<h3>Time-bounded access</h3>
+<p>The <em>Effective from</em> / <em>Expires at</em> fields make a membership temporary:</p>
+<table>
+  <tr><th>Effective from</th><th>Expires at</th><th>Result</th></tr>
+  <tr><td>empty</td><td>empty</td><td><b>Active</b> now, indefinitely</td></tr>
+  <tr><td>empty</td><td>31 Dec 2026</td><td>Active now, auto-revoked after 31 Dec 2026</td></tr>
+  <tr><td>1 Sep 2026</td><td>empty</td><td><b>Scheduled</b> — activates on 1 Sep 2026</td></tr>
+  <tr><td>1 Sep 2026</td><td>28 Feb 2027</td><td>Active only within that window</td></tr>
+</table>
+<div class="example">
+  <span class="tag">Example — a 6-month postdoc</span>
+  <p>Add <em>Dr. Lee</em> to <code>schmidt-lab</code> with <em>Expires at</em> = 30 Jun 2027. Lee gets access
+  today; on 1 Jul 2027 the scheduler revokes the membership and re-projects — no manual cleanup, and it
+  shows up on the Expiry dashboard (§8) beforehand.</p>
+</div>
+<div class="callout"><b>Status values</b>
+<code>active</code> (counts toward access), <code>scheduled</code> (future start), <code>expired</code>
+(window passed), <code>revoked</code> (ended manually). Only <code>active</code> memberships grant access.</div>
+
+<h3>Remove a member <span class="pill admin">admin</span> <span class="pill mgr">group manager</span></h3>
+<p>In the Members panel, click <strong>Remove</strong> on the row. Access is withdrawn from SciCat right away.</p>
+<div class="callout warn"><b>Last-admin safeguard</b>
+You cannot remove the final member of a configured admin group — this prevents locking everyone out.
+Add another admin first.</div>
+
+<h3>View a person's groups <span class="pill any">any user</span></h3>
+<p>On the <strong>Users</strong> page, search a user to see every group they belong to, with status and
+dates, plus their current SciCat access groups.</p>
+
+<!-- ───────────────────────── 6 ───────────────────────── -->
+<h2 class="sec" id="projection">6. Projection to SciCat</h2>
+<p><strong>Projection</strong> is how membership becomes real access. It runs automatically on every
+membership change and on a schedule, so you rarely trigger it by hand — but the controls are on each
+group's detail page.</p>
+<table>
+  <tr><th>Action</th><th>What it does</th></tr>
+  <tr><td><strong>Project now</strong></td><td>Recomputes effective access for the group's members and writes it to SciCat now.</td></tr>
+  <tr><td><strong>Reconcile</strong></td><td>Compares intended vs actual access across users, reports any <em>drift</em>, and fixes it.</td></tr>
+</table>
+<div class="callout tip"><b>Your manual SciCat edits are preserved</b>
+Projection only ever adds/removes the group names this app manages. Intrinsic strings (a user's personal
+group, <code>globalaccess</code>, role strings, groups created directly in SciCat) are never touched.</div>
+<div class="example">
+  <span class="tag">Example — recovering from drift</span>
+  <p>Someone edited a user's access groups directly in SciCat and removed a managed group by mistake.
+  Click <strong>Reconcile</strong>: the drift is listed and corrected so SciCat matches the app's intended
+  state again.</p>
+</div>
+
+<!-- ───────────────────────── 7 ───────────────────────── -->
+<h2 class="sec" id="grants">7. Resource grants</h2>
+<p>Open <strong>Resource Grants</strong> to attach a group to SciCat resources — datasets, origdatablocks,
+proposals, samples, instruments or jobs — individually or in bulk.</p>
+
+<h3>Apply a group to resources <span class="pill admin">admin</span> <span class="pill mgr">group manager</span></h3>
+<ol class="steps">
+  <li>Pick a <strong>Resource type</strong> (e.g. <em>dataset</em>) and optionally <strong>Search</strong> to narrow the list.</li>
+  <li>Tick the resources you want (the checkbox column; select many for a bulk apply).</li>
+  <li>Click <strong>Apply group (N)</strong>.</li>
+  <li>Choose the <strong>Group</strong> and a <strong>Mode</strong>:
+    <table>
+      <tr><th>Mode</th><th>Effect</th></tr>
+      <tr><td><code>access</code></td><td>Adds the group to each resource's <code>accessGroups</code> (read access). Existing groups are kept.</td></tr>
+      <tr><td><code>owner</code></td><td>Sets the resource's <code>ownerGroup</code> to this group. The previous owner is captured so it can be restored.</td></tr>
+    </table>
+  </li>
+  <li>(Optional) set a time window, then <strong>Apply</strong>.</li>
+</ol>
+<div class="callout"><b>Per-item results</b>
+Bulk applies report success/failure <em>per resource</em>. If 2 of 50 fail (e.g. a deleted dataset), the
+other 48 still succeed and the 2 errors are listed — re-try just those.</div>
+<div class="example">
+  <span class="tag">Example — share a proposal's data</span>
+  <p>Filter datasets, select all 24 belonging to proposal 42, <strong>Apply group</strong>
+  <code>proposal-42</code> in <code>access</code> mode. Every member of that group can now read those
+  datasets in SciCat.</p>
+</div>
+
+<h3>Remove a grant <span class="pill admin">admin</span> <span class="pill mgr">group manager</span></h3>
+<p>Removing a grant withdraws the group from the resource in SciCat. For an <code>owner</code> grant, the
+previously-captured owner group is restored.</p>
+
+<!-- ───────────────────────── 8 ───────────────────────── -->
+<h2 class="sec" id="expiry">8. Expiry dashboard</h2>
+<p>Open <strong>Expiry</strong> for a forward-looking view of temporary access. Choose a window (7–90 days)
+at the top.</p>
+<table>
+  <tr><th>Panel</th><th>Shows</th></tr>
+  <tr><td>Expiring soon</td><td>Active memberships whose <em>Expires at</em> falls inside the window.</td></tr>
+  <tr><td>Recently expired</td><td>Memberships the scheduler revoked within the window.</td></tr>
+  <tr><td>Expiring grants</td><td>Active resource grants about to lapse.</td></tr>
+</table>
+<div class="callout tip"><b>Nothing to click to enforce it</b>
+Expiration happens on its own — the dashboard is for awareness, e.g. to extend a membership before it
+lapses (open the group and edit/re-add the member with a new date).</div>
+
+<!-- ───────────────────────── 9 ───────────────────────── -->
+<h2 class="sec" id="transfers">9. Ownership transfer (departures)</h2>
+<p>When someone leaves, their owned resources must not be orphaned. <strong>Transfer rules</strong> map a
+departing user to a successor; deactivating the user then reassigns their resources automatically.</p>
+
+<h3>Create a transfer rule <span class="pill admin">admin</span></h3>
+<ol class="steps">
+  <li>Open <strong>Transfers</strong> → <strong>New rule</strong>.</li>
+  <li>Give it a <strong>Name</strong> and optional <strong>Match</strong> filters (user ID, group, and/or category). Blank match = applies to anyone.</li>
+  <li>Choose the <strong>Successor type</strong> (user or group) and the <strong>Successor</strong>.</li>
+  <li>Set <strong>Priority</strong> (lower = checked first) and, for a user successor, optionally toggle
+      <strong>Transfer owner/email</strong> to also reassign <code>owner</code>/<code>ownerEmail</code>.</li>
+  <li><strong>Create</strong>.</li>
+</ol>
+
+<h3>Deactivate a departing user <span class="pill admin">admin</span></h3>
+<ol class="steps">
+  <li>Go to <strong>Users</strong>, find the person.</li>
+  <li>Click <strong>Deactivate &amp; transfer</strong> and confirm.</li>
+  <li>A summary reports how many resources were transferred and how many need manual handling.</li>
+</ol>
+<div class="example">
+  <span class="tag">Example — postdoc handover</span>
+  <p>Rule: <em>match userId = j.lee</em>, successor <em>group</em> <code>schmidt-lab</code>. When Dr. Lee
+  leaves, click <strong>Deactivate &amp; transfer</strong>: every dataset Lee owned is reassigned to
+  <code>schmidt-lab</code>, each move recorded in the history with previous → new owner.</p>
+</div>
+<div class="callout"><b>Safe to re-run; never silently orphaned</b>
+Transfers are idempotent — running a deactivation twice does not double-move anything. If <em>no</em>
+rule matches, the resources are flagged <code>pending_manual</code> (a warning banner on the Transfers
+page) instead of being left without an owner.</div>
+<div class="callout tip"><b>Expiry can trigger transfers too</b>
+If a user's last access lapses by expiry, the scheduler runs the same transfer logic automatically,
+attributed to the <em>system</em> actor in the audit log.</div>
+
+<h3>Transfer history <span class="pill any">any user</span></h3>
+<p>The lower table on the Transfers page lists every reassignment: when, from whom, the resource, the new
+owner, and the outcome (<code>transferred</code> / <code>pending_manual</code> / <code>failed</code>).</p>
+
+<!-- ───────────────────────── 10 ───────────────────────── -->
+<h2 class="sec" id="audit">10. Audit log <span class="pill admin">admin</span></h2>
+<p>Open <strong>Audit</strong> for a chronological, filterable record of every change.</p>
+<ul>
+  <li><strong>Filter</strong> by actor, entity type (group / membership / grant / projection / transfer / user) and a date range.</li>
+  <li>The <strong>Source</strong> badge distinguishes <code>user</code> actions from automated <code>system</code> actions (scheduler).</li>
+  <li><strong>Click a row</strong> to see the before/after detail of that change.</li>
+</ul>
+<div class="example">
+  <span class="tag">Example — "who removed Alice from the team?"</span>
+  <p>Filter entity type = <em>membership</em>, actor = the suspected user (or leave blank), set the date
+  range. The matching <code>membership.revoke</code> entry shows who did it and when, with the before/after.</p>
+</div>
+
+<!-- ───────────────────────── Glossary ───────────────────────── -->
+<h2 class="sec" id="glossary">Glossary</h2>
+<table>
+  <tr><th>Term</th><th>Meaning</th></tr>
+  <tr><td>Access group</td><td>A named group string SciCat checks for read access. This app is the registry for the managed ones.</td></tr>
+  <tr><td>Projection</td><td>Computing a user's effective access and writing it into their SciCat identity.</td></tr>
+  <tr><td>Reconcile</td><td>Detecting and fixing differences (drift) between intended and actual SciCat state.</td></tr>
+  <tr><td>Grant</td><td>An application of a group to a resource's <code>accessGroups</code> (access) or <code>ownerGroup</code> (owner).</td></tr>
+  <tr><td>ownerGroup</td><td>The single group that owns a SciCat resource.</td></tr>
+  <tr><td>Transfer rule</td><td>A mapping from a departing user to a successor used to reassign ownership.</td></tr>
+  <tr><td>System actor</td><td>The scheduler, shown as <code>system</code> in the audit log for automated actions.</td></tr>
+  <tr><td>Drift</td><td>A mismatch between what the app intends and what SciCat actually has.</td></tr>
+</table>
+
+<!-- ───────────────────────── FAQ ───────────────────────── -->
+<h2 class="sec" id="faq">Troubleshooting &amp; FAQ</h2>
+<h3>"A change I made in SciCat disappeared."</h3>
+<p>If you edited a <em>managed</em> group on a user directly in SciCat, the next projection/reconcile
+restores the app's intended value. Make membership changes here, not in SciCat.</p>
+<h3>"I can't create a group — name rejected."</h3>
+<p>The name is reserved, already exists, or matches a per-user group. Choose a distinct name (§4).</p>
+<h3>"Bulk apply shows some failures."</h3>
+<p>Those specific resources couldn't be patched (often deleted or renamed in SciCat). The rest succeeded;
+re-select the failed ones and retry.</p>
+<h3>"A deactivated user's resources say <code>pending_manual</code>."</h3>
+<p>No transfer rule matched. Create a rule (§9) and re-run the deactivation, or reassign those resources
+by hand in SciCat.</p>
+<h3>"Buttons to change things aren't showing."</h3>
+<p>You are signed in as a non-admin / non-manager. Read access works for everyone; ask an admin for the
+role you need (§3).</p>
+
+<footer>
+  SciCat Access Management · User Manual. All times are handled in UTC. This document is served by the
+  application — reach it any time from the <strong>User Manual</strong> link in the left navigation.
+</footer>
+</main>
+</div>
+</body>
+</html>
