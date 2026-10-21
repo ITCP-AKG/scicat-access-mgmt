@@ -6,10 +6,11 @@ tests can construct an AppContext with a fake SciCat client + in-memory Mongo.
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from .auth.jwt import WhoamiCache
 from .config import Settings, get_settings
 from .services.audit import AuditService
 from .services.directory.scicat_local import ScicatLocalDirectory
@@ -32,8 +33,13 @@ class AppContext:
         self.scicat_db = scicat_db
         self.scicat = scicat
         self.clock = clock
-        self.audit = AuditService(app_db)
         self.directory = ScicatLocalDirectory(scicat_db, self.settings.scicat_identity_collection)
+        self.audit = AuditService(app_db, resolve_name=self._username_for)
+        self.whoami_cache = WhoamiCache(self.settings.whoami_cache_seconds)
 
     def now(self):
         return self.clock()
+
+    async def _username_for(self, user_id: str) -> str:
+        user = await self.directory.get(user_id)
+        return user.username if user else ""

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from ..auth.deps import current_user, get_ctx, require_group_manager
+from ..auth.deps import current_user, ensure_can_manage_group, get_ctx, is_admin, require_admin
 from ..auth.jwt import CurrentUser
 from ..context import AppContext
 from ..models.group import Group, GroupCreate, GroupDetail, GroupUpdate
@@ -13,6 +13,8 @@ from ..services.groups import (
     GroupInUseError,
     GroupNotFoundError,
     GroupService,
+    HoldersExistError,
+    InvalidGroupError,
     ReservedNameError,
 )
 
@@ -46,8 +48,20 @@ async def create_group(
         return await _service(ctx).create(payload, actor=user.userId)
     except ReservedNameError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except DuplicateGroupError as exc:
+    except (DuplicateGroupError, HoldersExistError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InvalidGroupError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/-/name-check")
+async def name_check(
+    name: str,
+    ctx: AppContext = Depends(get_ctx),
+    _: CurrentUser = Depends(require_admin),
+):
+    """Preflight for group creation: validity, collisions and existing SciCat holders."""
+    return await _service(ctx).name_check(name)
 
 
 @router.get("/{name}", response_model=GroupDetail)
@@ -69,12 +83,20 @@ async def update_group(
     ctx: AppContext = Depends(get_ctx),
     user: CurrentUser = Depends(current_user),
 ):
-    if not await require_group_manager(name, user, ctx):
-        raise HTTPException(status_code=403, detail="admin or group manager required")
+    await ensure_can_manage_group(name, user, ctx)
+    if not is_admin(user, ctx):
+        admin_only = payload.model_fields_set & {"category", "managers", "status"}
+        if admin_only:
+            raise HTTPException(
+                status_code=403,
+                detail=f"admin required to change {', '.join(sorted(admin_only))}",
+            )
     try:
         return await _service(ctx).update(name, payload, actor=user.userId)
     except GroupNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"group '{name}' not found") from exc
+    except InvalidGroupError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)

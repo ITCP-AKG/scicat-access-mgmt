@@ -46,7 +46,12 @@ export default function AuditPage() {
         <Chip size="small" label={p.value} color={p.value === 'system' ? 'info' : 'default'} />
       ),
     },
-    { field: 'actor', headerName: 'Actor', flex: 1 },
+    {
+      field: 'actor',
+      headerName: 'Actor',
+      flex: 1,
+      renderCell: (p) => p.row.actorName || p.value,
+    },
     { field: 'action', headerName: 'Action', flex: 1 },
     { field: 'entityType', headerName: 'Entity', width: 120 },
     { field: 'entityId', headerName: 'Target', flex: 1 },

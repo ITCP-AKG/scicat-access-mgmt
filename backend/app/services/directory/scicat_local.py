@@ -56,6 +56,10 @@ class ScicatLocalDirectory:
         cursor = self.col.find({}).limit(limit)
         return [_to_user(doc) async for doc in cursor]
 
+    async def username_exists(self, username: str) -> bool:
+        rx = re.compile(f"^{re.escape(username.strip())}$", re.IGNORECASE)
+        return await self.col.find_one({"profile.username": rx}, {"_id": 1}) is not None
+
     async def is_active(self, user_id: str) -> bool:
         user = await self.get(user_id)
         return bool(user and user.active)

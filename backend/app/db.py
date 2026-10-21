@@ -49,12 +49,31 @@ class Database:
         await self.app.audit_log.create_index([("at", -1)])
         await self.app.audit_log.create_index([("actor", 1)])
         await self.app.audit_log.create_index([("entityType", 1)])
+        await self.migrate()
+
+    async def migrate(self) -> None:
+        """Idempotent data migrations, run at startup."""
+        assert self.app is not None
+        await migrate(self.app)
 
     def close(self) -> None:
         if self._app_client is not None:
             self._app_client.close()
         if self._scicat_client is not None and self._scicat_client is not self._app_client:
             self._scicat_client.close()
+
+
+async def migrate(app_db: AsyncIOMotorDatabase) -> None:
+    # Group category "proposal" was renamed to "administrative".
+    await app_db.groups.update_many(
+        {"category": "proposal"}, {"$set": {"category": "administrative"}}
+    )
+    # Instruments and jobs carry no ownerGroup/accessGroups in SciCat v4.3.1, so grants on
+    # them could never be applied; retire any that were stored.
+    await app_db.resource_grants.update_many(
+        {"resourceType": {"$in": ["instrument", "job"]}, "status": {"$ne": "removed"}},
+        {"$set": {"status": "removed", "endedBy": "migration"}},
+    )
 
 
 # Singleton used by the FastAPI app; tests inject their own Database instance.

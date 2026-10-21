@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from ..util import utcnow
 
-GroupCategory = Literal["research-group", "project", "proposal", "instrument", "other"]
+GroupCategory = Literal["research-group", "project", "administrative", "instrument", "other"]
 GroupStatus = Literal["active", "retired"]
 
 
@@ -17,7 +17,10 @@ class GroupCreate(BaseModel):
     name: str
     description: str = ""
     category: GroupCategory = "other"
-    managers: list[str] = []
+    managers: list[str] = []  # directory userIds
+    # Required when SciCat identities already carry the name: true adopts them as members,
+    # false removes the string from them.
+    importHolders: bool | None = None
 
 
 class GroupUpdate(BaseModel):
@@ -42,3 +45,4 @@ class Group(BaseModel):
 class GroupDetail(Group):
     memberCount: int = 0
     grantCount: int = 0
+    transferRuleCount: int = 0

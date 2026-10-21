@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from ..auth.deps import get_ctx, require_admin
 from ..auth.jwt import CurrentUser
 from ..context import AppContext
 from ..services.projection import ProjectionService, SyncResult
 from ..services.reconcile import ReconcileService
-from pydantic import BaseModel
 
 router = APIRouter(prefix="/projection", tags=["projection"])
 

@@ -6,6 +6,11 @@ SciCat so authorization reflects the app state immediately (US3 integration).
 
 from __future__ import annotations
 
+import logging
+from typing import Any
+
+from pymongo.errors import DuplicateKeyError
+
 from ..context import AppContext
 from ..models.membership import (
     Membership,
@@ -13,7 +18,10 @@ from ..models.membership import (
     MembershipUpdate,
     compute_status,
 )
+from ..util import window_error
 from .projection import ProjectionService
+
+logger = logging.getLogger(__name__)
 
 
 class MembershipError(Exception):
@@ -37,6 +45,14 @@ class LastAdminError(MembershipError):
 
 
 class MembershipNotFoundError(MembershipError):
+    pass
+
+
+class InvalidWindowError(MembershipError):
+    pass
+
+
+class MembershipEndedError(MembershipError):
     pass
 
 
@@ -65,16 +81,30 @@ class MembershipService:
         if not user:
             raise UserMissingError(payload.userId)
 
-        existing = await self.col.find_one(
+        now = self.ctx.now()
+        error = window_error(payload.effectiveFrom, payload.expiresAt, now)
+        if error:
+            raise InvalidWindowError(error)
+
+        # An open membership blocks a new one — unless it has lapsed and the sweep has not
+        # materialised that yet, in which case record the expiry now.
+        cursor = self.col.find(
             {"groupName": group_name, "userId": payload.userId,
-             "status": {"$in": ["active", "scheduled"]}}
+             "status": {"$in": ["active", "scheduled"]}},
+            {"_id": 0},
         )
-        if existing:
-            raise DuplicateMembershipError(
-                f"{payload.userId} already a member of {group_name}"
+        async for existing in cursor:
+            state = compute_status(existing.get("effectiveFrom"), existing.get("expiresAt"), now)
+            if state != "expired":
+                raise DuplicateMembershipError(
+                    f"{payload.userId} already a member of {group_name}"
+                )
+            await self.col.update_one(
+                {"id": existing["id"]},
+                {"$set": {"status": "expired", "endedAt": now, "endedBy": "system"}},
             )
 
-        status = compute_status(payload.effectiveFrom, payload.expiresAt, self.ctx.now())
+        status = compute_status(payload.effectiveFrom, payload.expiresAt, now)
         membership = Membership(
             groupName=group_name,
             userId=payload.userId,
@@ -84,15 +114,31 @@ class MembershipService:
             status=status,
             addedBy=actor,
         )
-        await self.col.insert_one(membership.model_dump())
+        try:
+            await self.col.insert_one(membership.model_dump())
+        except DuplicateKeyError as exc:  # concurrent add of the same user
+            raise DuplicateMembershipError(
+                f"{payload.userId} already a member of {group_name}"
+            ) from exc
         await self.ctx.audit.record(
             actor=actor, action="membership.add", entity_type="membership",
             entity_id=membership.id,
             summary=f"added {payload.userId} to {group_name}",
             after=membership.model_dump(mode="json"),
         )
+        if await self.ctx.app_db.departed_users.find_one_and_delete({"_id": payload.userId}):
+            await self.ctx.audit.record(
+                actor=actor, action="user.reactivate", entity_type="user",
+                entity_id=payload.userId, summary=f"{payload.userId} re-joined via {group_name}",
+            )
         await self.projection.project_user(payload.userId, actor=actor)
         return membership
+
+    async def get(self, membership_id: str) -> Membership:
+        doc = await self.col.find_one({"id": membership_id}, {"_id": 0})
+        if not doc:
+            raise MembershipNotFoundError(membership_id)
+        return Membership(**self._refresh_status(doc))
 
     async def list_for_group(self, group_name: str) -> list[Membership]:
         cursor = self.col.find({"groupName": group_name}, {"_id": 0})
@@ -106,13 +152,21 @@ class MembershipService:
         doc = await self.col.find_one({"id": membership_id}, {"_id": 0})
         if not doc:
             raise MembershipNotFoundError(membership_id)
+        now = self.ctx.now()
+        current = self._refresh_status(doc)["status"]
+        if current in ("revoked", "expired"):
+            raise MembershipEndedError(
+                f"membership {membership_id} has ended ({current}); add the user again instead"
+            )
         changes = payload.model_dump(exclude_unset=True)
         merged = {**doc, **changes}
-        merged["status"] = compute_status(
-            merged.get("effectiveFrom"), merged.get("expiresAt"), self.ctx.now(),
-            ended=doc.get("status") == "revoked",
+        error = window_error(merged.get("effectiveFrom"), merged.get("expiresAt"), now)
+        if error:
+            raise InvalidWindowError(error)
+        merged["status"] = compute_status(merged.get("effectiveFrom"), merged.get("expiresAt"), now)
+        await self.col.update_one(
+            {"id": membership_id}, {"$set": {**changes, "status": merged["status"]}}
         )
-        await self.col.update_one({"id": membership_id}, {"$set": {**changes, "status": merged["status"]}})
         await self.ctx.audit.record(
             actor=actor, action="membership.update", entity_type="membership",
             entity_id=membership_id, summary=f"updated membership {membership_id}",
@@ -137,7 +191,7 @@ class MembershipService:
         )
         await self.projection.project_user(doc["userId"], actor=actor)
 
-    async def sweep(self, actor: str = "system") -> dict[str, int]:
+    async def sweep(self, actor: str = "system") -> dict[str, Any]:
         """Materialise membership temporal transitions and re-project (US5).
 
         scheduled→active and active→expired are applied to the stored status, then
@@ -147,7 +201,7 @@ class MembershipService:
         now = self.ctx.now()
         activated = expired = 0
         affected: set[str] = set()
-        expired_users: set[str] = set()
+        expired_groups: dict[str, set[str]] = {}
         cursor = self.col.find({"status": {"$in": ["active", "scheduled"]}}, {"_id": 0})
         docs = [doc async for doc in cursor]
         for doc in docs:
@@ -174,16 +228,43 @@ class MembershipService:
                     summary=f"expired {doc['userId']} from {doc['groupName']}",
                 )
                 affected.add(doc["userId"])
-                expired_users.add(doc["userId"])
+                expired_groups.setdefault(doc["userId"], set()).add(doc["groupName"])
                 expired += 1
-        for user_id in affected:
-            await self.projection.project_user(user_id, actor=actor)
+        projected = await self.projection.project_users(affected, actor=actor, save_state=False)
         return {
             "membershipsActivated": activated,
             "membershipsExpired": expired,
             "usersReprojected": len(affected),
-            "expiredUserIds": sorted(expired_users),
+            "projectionErrors": projected.errors,
+            # for expiry-triggered transfers: which groups each user just lost
+            "expiredGroupsByUser": {u: sorted(g) for u, g in expired_groups.items()},
         }
+
+    async def end_all_for_user(self, user_id: str, actor: str) -> list[str]:
+        """End every open membership of a departing user and re-project them.
+
+        Returns the groups they belonged to (transfer rules are matched against these).
+        """
+        now = self.ctx.now()
+        groups: set[str] = set()
+        cursor = self.col.find({"userId": user_id, "status": {"$in": ["active", "scheduled"]}},
+                               {"_id": 0})
+        for doc in [d async for d in cursor]:
+            await self.col.update_one(
+                {"id": doc["id"]},
+                {"$set": {"status": "revoked", "endedAt": now, "endedBy": actor}},
+            )
+            await self.ctx.audit.record(
+                actor=actor, action="membership.revoke", entity_type="membership",
+                entity_id=doc["id"],
+                summary=f"revoked {user_id} from {doc['groupName']} (departure)", before=doc,
+            )
+            groups.add(doc["groupName"])
+        try:
+            await self.projection.project_user(user_id, actor=actor)
+        except Exception:  # noqa: BLE001 - memberships are ended; login watch/reconcile fix it
+            logger.exception("projection after departure of %s failed", user_id)
+        return sorted(groups)
 
     async def _guard_last_admin(self, doc: dict) -> None:
         """Prevent removing the last active member of a configured admin group (FR-026)."""

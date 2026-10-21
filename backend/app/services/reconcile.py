@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..context import AppContext
+from .grants import GrantService
 from .projection import DriftItem, ProjectionService, SyncResult
 
 
@@ -12,32 +13,45 @@ class ReconcileService:
         self.projection = ProjectionService(ctx)
 
     async def reconcile(self, *, apply: bool = True, actor: str = "system") -> SyncResult:
-        """Compare intended vs actual accessGroups for every user with memberships.
+        """Compare intended vs actual state: users' accessGroups and applied grants.
 
-        Reports drift; when apply=True, writes the corrected target. Safe if SciCat is
-        unreachable — the intended (app) state is never mutated, so a later run recovers.
+        Covers members, users the app has projected onto (so names of deleted groups get
+        cleaned up) and any identity carrying a registered group name. Reports drift; when
+        apply=True, writes the corrected target. Safe if SciCat is unreachable — the
+        intended (app) state is never mutated, so a later run recovers.
         """
         result = SyncResult(ranAt=self.ctx.now())
-        cursor = self.ctx.app_db.memberships.find({}, {"userId": 1, "_id": 0})
-        user_ids = list({doc["userId"] async for doc in cursor})
-
-        for uid in user_ids:
-            identity = await self.projection.identities.find_one(
-                {"$or": [{"userId": uid}, {"profile.id": uid}]}
+        registry = await self.projection.registry()
+        open_members = {
+            doc["userId"]
+            async for doc in self.ctx.app_db.memberships.find(
+                {"status": {"$in": ["active", "scheduled"]}}, {"userId": 1, "_id": 0}
             )
-            if not identity:
-                result.errors.append(f"{uid}: no SciCat identity")
-                continue
-            current = list((identity.get("profile") or {}).get("accessGroups") or [])
-            app_owned = await self.projection._app_owned_names()
-            active = await self.projection._active_groups_for_user(uid)
-            target = self.projection._compute_target(current, app_owned, active)
-            if set(target) != set(current):
-                result.drift.append(DriftItem(userId=uid, expected=target, actual=current))
+        }
+
+        for uid in sorted(await self.projection.managed_user_ids(registry)):
+            try:
+                plan = await self.projection.plan_user(uid, registry)
+                if plan is None:
+                    if uid in open_members:
+                        result.errors.append(f"{uid}: no SciCat identity")
+                    continue
+                if plan.changed:
+                    result.drift.append(
+                        DriftItem(userId=uid, expected=plan.target, actual=plan.current)
+                    )
                 if apply:
-                    res = await self.projection.project_user(uid, actor=actor)
+                    res = await self.projection.project_user(uid, actor=actor, registry=registry)
                     if res and res[0]:
                         result.usersUpdated += 1
+            except Exception as exc:  # noqa: BLE001 - record and continue
+                result.errors.append(f"{uid}: {exc}")
+
+        grant_drift, grant_errors = await GrantService(self.ctx).check_drift(
+            apply=apply, actor=actor
+        )
+        result.grantDrift = grant_drift
+        result.errors.extend(grant_errors)
 
         await self.ctx.app_db.sync_state.update_one(
             {"_id": "reconcile"},

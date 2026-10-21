@@ -6,7 +6,6 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 # SciCat special / reserved group strings that must never be created as managed groups.
 DEFAULT_RESERVED_GROUPS = [
     "admin",
@@ -32,11 +31,25 @@ class Settings(BaseSettings):
 
     # --- SciCat REST ---
     scicat_base_url: str = "http://localhost:80/api/v3"
+    scicat_timeout_seconds: float = 10.0
+    # Functional account used for ALL SciCat resource reads/writes (the app enforces its own
+    # authorization). Either username/password (logged in lazily, re-login on expiry) or a
+    # pre-issued token.
+    scicat_service_username: str | None = None
+    scicat_service_password: str | None = None
+    scicat_service_token: str | None = None
 
     # --- Auth ---
-    # Optional shared secret for local JWT fast-path verification. If unset, validate via /auth/whoami.
+    # Optional shared secret for a local signature pre-check. Validity is always confirmed
+    # via SciCat /auth/whoami (cached briefly per token).
     jwt_secret: str | None = None
+    whoami_cache_seconds: float = 60.0
     admin_groups: list[str] = ["admin"]
+
+    # --- Ownership transfer ---
+    # Template of a user's personal ownerGroup, e.g. "u.{username}". Empty disables
+    # ownerGroup reassignment of personal resources (contact fields are still handed over).
+    personal_group_template: str = ""
 
     # --- Reserved groups ---
     reserved_groups: list[str] = DEFAULT_RESERVED_GROUPS
@@ -44,6 +57,8 @@ class Settings(BaseSettings):
     # --- Scheduler (used from US5 onward) ---
     expiry_sweep_seconds: int = 300
     reconcile_seconds: int = 1800
+    # SciCat rewrites profile.accessGroups on every login; re-project changed identities.
+    login_watch_seconds: int = 15
     expiry_warning_days: int = 30
 
     # --- Misc ---
