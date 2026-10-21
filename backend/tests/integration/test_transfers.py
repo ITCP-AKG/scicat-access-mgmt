@@ -42,9 +42,10 @@ async def test_deactivate_transfers_owned_resources(client, admin_headers, ctx):
     assert rec["newOwnerGroup"] == "successor-team"
     assert ctx.scicat.resources[("dataset", "ds-1")]["ownerGroup"] == "successor-team"
 
-    # the directory user is now deactivated
-    doc = await ctx.scicat_db["UserIdentity"].find_one({"userId": "user-id"})
-    assert doc["deactivated"] is True
+    # the departure is recorded in the app (SciCat's identity is left alone)
+    assert await ctx.app_db.departed_users.find_one({"_id": "user-id"})
+    users = (await client.get("/api/v1/users?q=alice", headers=admin_headers)).json()
+    assert users[0]["active"] is False
 
 
 async def test_redeactivate_is_idempotent(client, admin_headers, ctx):
@@ -83,7 +84,10 @@ async def test_transfer_owner_to_user_successor(client, admin_headers, ctx):
         client, admin_headers,
         successorType="user", successor="bob-id", transferOwner=True,
     )
-    ctx.scicat.seed_resource("dataset", "ds-1", ownerGroup="u.alice", owner="alice")
+    ctx.scicat.seed_resource(
+        "dataset", "ds-1", ownerGroup="u.alice", owner="alice",
+        ownerEmail="Alice@catorga.dev", contactEmail="pi@catorga.dev",
+    )
 
     resp = await client.post("/api/v1/users/user-id/deactivate", headers=admin_headers)
     rec = resp.json()["records"][0]
@@ -91,7 +95,8 @@ async def test_transfer_owner_to_user_successor(client, admin_headers, ctx):
     res = ctx.scicat.resources[("dataset", "ds-1")]
     assert res["ownerGroup"] == "u.bob"
     assert res["owner"] == "bob"
-    assert res["ownerEmail"] == "bob@catorga.dev"
+    assert res["ownerEmail"] == "bob@catorga.dev"  # matched case-insensitively
+    assert res["contactEmail"] == "pi@catorga.dev"  # names someone else: untouched
 
 
 async def test_rule_crud_and_records_require_auth(client, admin_headers, user_headers):

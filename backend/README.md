@@ -22,7 +22,7 @@ app/
   models/            # Pydantic domain models
   services/          # groups, memberships, projection, reconcile, grants,
                      # transfers, audit, scicat_client, directory/
-  scheduler/jobs.py  # expiry sweep + reconcile + expiry-driven transfers (Mongo lease lock)
+  scheduler/jobs.py  # expiry sweep, login watcher, reconcile (Mongo lease lock)
   api/               # routers mounted under /api/v1
 tests/
   unit/              # pure logic (no Mongo/SciCat)
@@ -37,8 +37,10 @@ uvicorn app.main:app --reload --port 3100
 # health: http://localhost:3100/health   docs: http://localhost:3100/docs
 ```
 
-Requires a reachable MongoDB (app DB + SciCat `dacat` DB) and a SciCat backend for JWT
-validation. For a full stack use the docker-compose integration (below).
+Requires a reachable MongoDB (app DB + SciCat `dacat` DB), a SciCat backend for JWT
+validation, and an admin functional account for resource calls
+(`SCICAT_SERVICE_USERNAME`/`SCICAT_SERVICE_PASSWORD`). For a full stack use the
+docker-compose integration (below).
 
 ## Test
 
@@ -58,26 +60,33 @@ All settings have defaults (see `app/config.py`); override via environment.
 | `APP_DB_NAME` | `scicat_access_mgmt` | |
 | `SCICAT_MONGO_URI` | `mongodb://localhost:27017` | SciCat's Mongo (projection + directory) |
 | `SCICAT_DB_NAME` | `dacat` | |
-| `SCICAT_BASE_URL` | `http://localhost:80/api/v3` | SciCat REST base (whoami, resource PATCH) |
+| `SCICAT_BASE_URL` | `http://localhost:80/api/v3` | SciCat REST base (whoami, resource list/PATCH) |
+| `SCICAT_SERVICE_USERNAME` / `SCICAT_SERVICE_PASSWORD` | _(unset)_ | **Required.** SciCat functional account in `ADMIN_GROUPS` (e.g. `admin`) used for every resource read/write; logged in lazily, re-login on expiry |
+| `SCICAT_SERVICE_TOKEN` | _(unset)_ | Alternative to username/password (expires with SciCat's `JWT_EXPIRES_IN`) |
+| `PERSONAL_GROUP_TEMPLATE` | _(empty)_ | A user's personal ownerGroup, e.g. `{username}` (catorga). Empty: transfers only hand over contact fields |
 | `ADMIN_GROUPS` | `["admin"]` | JSON array; members are app admins |
 | `JWT_SECRET` | _(unset)_ | Optional local signature pre-check; whoami is authoritative |
+| `WHOAMI_CACHE_SECONDS` | `60` | Per-token cache of SciCat whoami answers |
 | `RESERVED_GROUPS` | SciCat specials | JSON array of names that cannot be created |
 | `EXPIRY_SWEEP_SECONDS` | `300` | Scheduler expiry sweep interval |
-| `RECONCILE_SECONDS` | `1800` | Scheduler reconcile interval |
+| `LOGIN_WATCH_SECONDS` | `15` | Re-project identities rewritten by a SciCat login |
+| `RECONCILE_SECONDS` | `1800` | Scheduler reconcile interval (also runs at startup) |
 | `CORS_ORIGINS` | dev origins | JSON array |
 
 ## API
 
 All routes are under `/api/v1`. Highlights:
 
-- `GET /me` — identity, current groups, isAdmin, managerOf
-- `GET/POST /groups`, `GET/PATCH/DELETE /groups/{name}`
+- `GET /me` — identity, current groups, isAdmin, managerOf (re-projects the caller first)
+- `GET/POST /groups`, `GET /groups/-/name-check?name=`, `GET/PATCH/DELETE /groups/{name}`
 - `GET/POST /groups/{name}/members`, `PATCH/DELETE /memberships/{id}`
-- `GET /users`, `GET /users/{id}/groups`, `POST /users/{id}/deactivate`
-- `POST /projection/run`, `POST /projection/reconcile`, `GET /projection/status`
-- `GET/POST /grants`, `DELETE /grants/{id}`, `GET /resources/{type}`
+- `GET /users`, `GET /users/{id}`, `GET /users/{id}/groups`, `POST /users/{id}/deactivate`
+- `POST /projection/run`, `POST /projection/reconcile`, `GET /projection/status` (admin)
+- `GET/POST /grants`, `DELETE /grants/{id}` (204, or 202 while SciCat refuses),
+  `GET /resources/{dataset|origdatablock|proposal|sample}`
 - `GET /expiry?withinDays=N`
-- `GET/POST/PATCH/DELETE /transfer-rules`, `GET /transfer-records`
+- `GET/POST/PATCH/DELETE /transfer-rules`, `GET /transfer-records`, `GET /transfer-batches`,
+  `POST /transfer-batches/{id}/retry` (admin)
 - `GET /audit` (admin)
 
 See `../specs/001-scicat-access-mgmt/contracts/openapi.yaml` for the full contract.
@@ -85,9 +94,23 @@ See `../specs/001-scicat-access-mgmt/contracts/openapi.yaml` for the full contra
 ## Auth model
 
 Callers present their **SciCat JWT** (`Authorization: Bearer …`), validated via SciCat
-`/auth/whoami`. Admin actions require membership of a configured `ADMIN_GROUPS`; group
-managers can manage their own groups. With SSO configured in SciCat, users authenticate
-through their institutional identity provider and the same token is used here.
+`/auth/whoami` (401 = token rejected, 503 = SciCat unavailable). Admin actions require
+membership of a configured `ADMIN_GROUPS`. Group managers manage their own groups: members,
+description, and access grants on resources owned by their own groups; owner grants,
+transfers and the audit log are admin-only. Directory and grant views need admin or manager
+rights; `/me` is open to every authenticated user. All SciCat resource calls run as the
+service account, so these checks are the only guard.
+
+## SciCat integration notes
+
+- SciCat (v4.3.1) re-reads `profile.accessGroups` on every request, so projection takes
+  effect immediately — but every login rewrites that array. The login watcher and `/me`
+  restore the app-managed groups; the app never touches SciCat's `modified` timestamp.
+- Projection removes only names the app manages (registered groups and what it last wrote
+  per user); other strings are preserved.
+- Only datasets, origdatablocks, proposals and samples carry ownerGroup/accessGroups.
+- Deactivating a user ends their memberships and transfers what they personally own; it
+  does not block their SciCat login (do that in the identity provider).
 
 ## Deployment
 

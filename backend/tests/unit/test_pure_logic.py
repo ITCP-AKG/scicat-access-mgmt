@@ -50,10 +50,8 @@ def test_grant_status_matrix():
 
 # ---- Effective-set computation (the projection invariant) ----
 
-def _compute(current, app_owned, active):
-    # _compute_target uses only its arguments — bypass __init__ (no ctx needed).
-    svc = ProjectionService.__new__(ProjectionService)
-    return svc._compute_target(current, set(app_owned), set(active))
+def _compute(current, removable, active):
+    return ProjectionService.compute_target(current, set(removable), set(active))
 
 
 def test_effective_set_adds_active_app_owned_groups():

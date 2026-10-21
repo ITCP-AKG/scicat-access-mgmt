@@ -1,12 +1,19 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { clearToken, getToken, scicatLogin, setToken } from '../api/client';
+import {
+  clearToken,
+  getToken,
+  scicatLogin,
+  setToken,
+  setUnauthorizedHandler,
+  type LoginMethod,
+} from '../api/client';
 import { UsersApi } from '../api/endpoints';
 import type { Me } from '../api/types';
 
 interface AuthState {
   me: Me | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string, method?: LoginMethod) => Promise<void>;
   logout: () => void;
 }
 
@@ -34,10 +41,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void refresh();
+    // Any 401 from the backend ends the session and returns to the login page.
+    setUnauthorizedHandler(() => setMe(null));
+    return () => setUnauthorizedHandler(null);
   }, []);
 
-  async function login(username: string, password: string) {
-    const token = await scicatLogin(username, password);
+  async function login(username: string, password: string, method: LoginMethod = 'local') {
+    const token = await scicatLogin(username, password, method);
     setToken(token);
     setLoading(true);
     await refresh();

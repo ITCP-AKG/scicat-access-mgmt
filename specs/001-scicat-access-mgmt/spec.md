@@ -10,7 +10,7 @@
 
 ## Context & Problem Statement
 
-SciCat v4 has no first-class concept of an access "group". A user's group membership exists only as a string array (`accessGroups`) stored on the user's identity record, normally populated by the external auth provider at login. There is no SciCat API to list groups, create groups, list users, or change a user's membership; the identity record is read-only over the REST API. Every governed resource (dataset, orig datablock, proposal, job, instrument, sample, user) carries an `ownerGroup` (single string) and `accessGroups` (string list) that the authorization engine compares against the caller's effective groups.
+SciCat v4 has no first-class concept of an access "group". A user's group membership exists only as a string array (`accessGroups`) stored on the user's identity record, normally populated by the external auth provider at login. There is no SciCat API to list groups, create groups, list users, or change a user's membership; the identity record is read-only over the REST API. Datasets, orig datablocks, proposals and samples carry an `ownerGroup` (single string) and `accessGroups` (string list) that the authorization engine compares against the caller's effective groups; users are governed through their identity's `accessGroups`. (SciCat v4.3.1 instruments and jobs carry no group fields.)
 
 A university catalysis lab needs to administer this in a structured way: many research groups, projects, proposals and instruments, plus temporary staff (students, postdocs) whose access must expire and whose owned resources must be handed over when they leave. This feature delivers a dedicated administrative web application that becomes the **source of truth** for groups and membership, **projects** effective memberships back into SciCat's identity records, stamps groups onto SciCat resources, and adds the temporal access and ownership-transfer capabilities SciCat lacks.
 
@@ -69,7 +69,7 @@ After membership changes, the system computes each affected user's effective acc
 
 ### User Story 4 - Apply a group to resource access lists (Priority: P2)
 
-An administrator selects a group and applies it as `ownerGroup` and/or an `accessGroups` entry to one or more SciCat resources of a chosen type (datasets, orig datablocks, proposals, jobs, instruments, samples, users), individually or in bulk via multi-select.
+An administrator selects a group and applies it as `ownerGroup` and/or an `accessGroups` entry to one or more SciCat resources of a chosen type (datasets, orig datablocks, proposals, samples), individually or in bulk via multi-select. Users are covered by membership (US2/US3).
 
 **Why this priority**: This is how groups gain meaning over actual data. It depends on groups existing (Story 1) but is valuable independently of temporal features.
 
@@ -164,7 +164,7 @@ An administrator (or auditor) reviews a chronological, filterable log of every c
 
 **Resource grants**
 
-- **FR-008**: System MUST allow applying a group to the owner-group and/or access-group lists of SciCat resources of these types: datasets, orig datablocks, proposals, jobs, instruments, samples, and users — both individually and as a bulk multi-select operation.
+- **FR-008**: System MUST allow applying a group to the owner-group and/or access-group lists of SciCat resources of these types: datasets, orig datablocks, proposals and samples (users via membership) — both individually and as a bulk multi-select operation. *Revised 2026-10: SciCat v4.3.1 instruments and jobs have no ownerGroup/accessGroups, so they cannot be granted; "instrument" remains a group category.*
 - **FR-009**: System MUST allow removing a previously applied group grant from resources.
 - **FR-010**: System MUST report per-item outcomes for bulk operations and continue past individual failures, presenting a summary.
 
@@ -205,7 +205,7 @@ An administrator (or auditor) reviews a chronological, filterable log of every c
 - **Group**: A named, described, categorized access group owned/managed by one or more administrators; the unit applied to users and resources. Maps to a SciCat access-group string but holds metadata SciCat does not.
 - **Directory User**: A person discoverable through the directory provider, identified by a stable directory identity, with display name and contact details; the subject of membership.
 - **Membership**: An association of a directory user to a group, with status and an optional temporal window (effective-from / expires-at); the basis for computing effective access.
-- **Resource Grant**: An application of a group to a specific SciCat resource (typed: dataset, orig datablock, proposal, job, instrument, sample, user) as owner-group or access-group, with an optional temporal window.
+- **Resource Grant**: An application of a group to a specific SciCat resource (typed: dataset, orig datablock, proposal, sample) as owner-group or access-group, with an optional temporal window.
 - **Effective Access (projection)**: The computed set of currently-active groups per user that is written into SciCat; a derived, reconcilable view.
 - **Transfer Rule**: A configured mapping from a departing/deactivated user (or a class of users) to a successor user or group, used to drive automatic ownership transfer.
 - **Transfer Record**: A logged reassignment of a resource/role from a previous owner to a new owner, with reason and timestamp.
@@ -230,7 +230,7 @@ An administrator (or auditor) reviews a chronological, filterable log of every c
 - The app writes effective access groups directly into SciCat's identity store (no external directory exists yet to manage them in); a future LDAP/AD provider would change where membership is sourced and possibly where it is written, behind the same provider abstraction.
 - No LDAP/AD server is available in the current environment; the initial directory provider enumerates existing SciCat users, and "deactivation" of a user is determined by the app's own records or directory provider rather than an external HR feed.
 - Authentication reuses SciCat login (JWT); authorization for app actions is derived from SciCat administrator status and app-managed group-manager assignments.
-- Resource grant operations use SciCat's supported resource APIs to set owner/access groups; resource types are limited to those enumerated (datasets, orig datablocks, proposals, jobs, instruments, samples, users).
+- Resource grant operations use SciCat's supported resource APIs to set owner/access groups; resource types are limited to those enumerated (datasets, orig datablocks, proposals, samples; users via membership).
 - All temporal boundaries are evaluated in a single canonical timezone configured for the deployment.
 - The frontend follows the existing catorga project's UI stack and conventions for visual and interaction consistency; established IAM/access-admin UI patterns guide the layout.
 - The catalysis lab operates a single SciCat instance; multi-instance federation is out of scope for v1.

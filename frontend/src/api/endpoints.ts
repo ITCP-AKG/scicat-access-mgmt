@@ -4,13 +4,16 @@ import type {
   AuditEntry,
   AuditQuery,
   BulkResult,
+  Departure,
   DirectoryUser,
   ExpiryDashboard,
   GrantMode,
   Group,
+  GroupCreate,
   GroupDetail,
   Me,
   Membership,
+  NameCheck,
   ResourceGrant,
   ResourcePage,
   ResourceType,
@@ -24,8 +27,9 @@ import type {
 export const GroupsApi = {
   list: (q?: string) => api.get<Group[]>(`/api/v1/groups${q ? `?q=${encodeURIComponent(q)}` : ''}`),
   get: (name: string) => api.get<GroupDetail>(`/api/v1/groups/${encodeURIComponent(name)}`),
-  create: (body: { name: string; description?: string; category: string; managers?: string[] }) =>
-    api.post<Group>('/api/v1/groups', body),
+  create: (body: GroupCreate) => api.post<Group>('/api/v1/groups', body),
+  nameCheck: (name: string) =>
+    api.get<NameCheck>(`/api/v1/groups/-/name-check?name=${encodeURIComponent(name)}`),
   update: (name: string, body: Partial<Pick<Group, 'description' | 'category' | 'managers' | 'status'>>) =>
     api.patch<Group>(`/api/v1/groups/${encodeURIComponent(name)}`, body),
   remove: (name: string, cascade = false) =>
@@ -37,11 +41,14 @@ export const MembersApi = {
     api.get<Membership[]>(`/api/v1/groups/${encodeURIComponent(group)}/members`),
   add: (group: string, body: { userId: string; effectiveFrom?: string | null; expiresAt?: string | null }) =>
     api.post<Membership>(`/api/v1/groups/${encodeURIComponent(group)}/members`, body),
+  update: (id: string, body: { effectiveFrom?: string | null; expiresAt?: string | null }) =>
+    api.patch<Membership>(`/api/v1/memberships/${id}`, body),
   revoke: (id: string) => api.del<void>(`/api/v1/memberships/${id}`),
 };
 
 export const UsersApi = {
   me: () => api.get<Me>('/api/v1/me'),
+  get: (userId: string) => api.get<DirectoryUser>(`/api/v1/users/${encodeURIComponent(userId)}`),
   search: (q: string) => api.get<DirectoryUser[]>(`/api/v1/users?q=${encodeURIComponent(q)}`),
   groups: (userId: string) =>
     api.get<Membership[]>(`/api/v1/users/${encodeURIComponent(userId)}/groups`),
@@ -56,13 +63,17 @@ export const TransfersApi = {
   updateRule: (id: string, body: TransferRuleCreate) =>
     api.patch<TransferRule>(`/api/v1/transfer-rules/${id}`, body),
   deleteRule: (id: string) => api.del<void>(`/api/v1/transfer-rules/${id}`),
-  records: (params?: { fromUserId?: string; outcome?: string }) => {
+  records: (params?: { fromUserId?: string; outcome?: string; batchId?: string }) => {
     const qs = new URLSearchParams();
     if (params?.fromUserId) qs.set('fromUserId', params.fromUserId);
     if (params?.outcome) qs.set('outcome', params.outcome);
+    if (params?.batchId) qs.set('batchId', params.batchId);
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
     return api.get<TransferRecord[]>(`/api/v1/transfer-records${suffix}`);
   },
+  batches: () => api.get<Departure[]>('/api/v1/transfer-batches'),
+  retryBatch: (batchId: string) =>
+    api.post<TransferBatchResult>(`/api/v1/transfer-batches/${encodeURIComponent(batchId)}/retry`),
 };
 
 export const GrantsApi = {
@@ -81,7 +92,8 @@ export const GrantsApi = {
     effectiveFrom?: string | null;
     expiresAt?: string | null;
   }) => api.post<BulkResult>('/api/v1/grants', body),
-  remove: (id: string) => api.del<void>(`/api/v1/grants/${id}`),
+  /** Resolves to the grant when SciCat refused the withdrawal (still pending, retried). */
+  remove: (id: string) => api.del<ResourceGrant | undefined>(`/api/v1/grants/${id}`),
   browse: (resourceType: ResourceType, params?: { q?: string; ownerGroup?: string; skip?: number; limit?: number }) => {
     const qs = new URLSearchParams();
     if (params?.q) qs.set('q', params.q);

@@ -20,17 +20,29 @@ import ResourceGrantsPage from './pages/ResourceGrantsPage';
 import ExpiryDashboard from './pages/ExpiryDashboard';
 import TransferRulesPage from './pages/TransferRulesPage';
 import AuditPage from './pages/AuditPage';
+import type { Me } from './api/types';
 
 const DRAWER_WIDTH = 220;
 
-const NAV = [
-  { to: '/groups', label: 'Groups' },
-  { to: '/users', label: 'Users' },
-  { to: '/grants', label: 'Resource Grants' },
-  { to: '/expiry', label: 'Expiry' },
-  { to: '/transfers', label: 'Transfers' },
-  { to: '/audit', label: 'Audit' },
+type Role = 'any' | 'manager' | 'admin';
+
+// Mirrors the backend: managers (of any group) see directory, grants and expiry views;
+// transfers and the audit log are admin-only.
+const NAV: { to: string; label: string; role: Role }[] = [
+  { to: '/groups', label: 'Groups', role: 'any' },
+  { to: '/users', label: 'Users', role: 'manager' },
+  { to: '/grants', label: 'Resource Grants', role: 'manager' },
+  { to: '/expiry', label: 'Expiry', role: 'manager' },
+  { to: '/transfers', label: 'Transfers', role: 'admin' },
+  { to: '/audit', label: 'Audit', role: 'admin' },
 ];
+
+function allowed(role: Role, me: Me | null): boolean {
+  if (!me) return false;
+  if (role === 'admin') return me.isAdmin;
+  if (role === 'manager') return me.isAdmin || me.managerOf.length > 0;
+  return true;
+}
 
 function Shell({ children }: { children: React.ReactNode }) {
   const { me, logout } = useAuth();
@@ -43,7 +55,8 @@ function Shell({ children }: { children: React.ReactNode }) {
             SciCat Access Management
           </Typography>
           <Typography variant="body2" sx={{ mr: 2 }}>
-            {me?.username} {me?.isAdmin ? '(admin)' : ''}
+            {me?.username}{' '}
+            {me?.isAdmin ? '(admin)' : me?.managerOf.length ? `(manager of ${me.managerOf.length})` : ''}
           </Typography>
           <Button color="inherit" onClick={logout}>
             Sign out
@@ -60,7 +73,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       >
         <Toolbar />
         <List>
-          {NAV.map((item) => (
+          {NAV.filter((item) => allowed(item.role, me)).map((item) => (
             <ListItemButton
               key={item.to}
               component={Link}
@@ -106,11 +119,11 @@ export default function App() {
       <Routes>
         <Route path="/groups" element={<GroupsPage />} />
         <Route path="/groups/:name" element={<GroupDetailPage />} />
-        <Route path="/users" element={<UserGroupsPage />} />
-        <Route path="/grants" element={<ResourceGrantsPage />} />
-        <Route path="/expiry" element={<ExpiryDashboard />} />
-        <Route path="/transfers" element={<TransferRulesPage />} />
-        <Route path="/audit" element={<AuditPage />} />
+        {allowed('manager', me) && <Route path="/users" element={<UserGroupsPage />} />}
+        {allowed('manager', me) && <Route path="/grants" element={<ResourceGrantsPage />} />}
+        {allowed('manager', me) && <Route path="/expiry" element={<ExpiryDashboard />} />}
+        {allowed('admin', me) && <Route path="/transfers" element={<TransferRulesPage />} />}
+        {allowed('admin', me) && <Route path="/audit" element={<AuditPage />} />}
         <Route path="*" element={<Navigate to="/groups" replace />} />
       </Routes>
     </Shell>

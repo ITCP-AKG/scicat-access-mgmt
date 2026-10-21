@@ -1,18 +1,16 @@
 import { Stack, TextField } from '@mui/material';
-
-export interface TemporalWindow {
-  effectiveFrom: string | null;
-  expiresAt: string | null;
-}
+import { windowError, type TemporalWindow } from '../lib/forms';
 
 interface Props {
   value: TemporalWindow;
   onChange: (value: TemporalWindow) => void;
+  /** Hide the start field (e.g. when only extending an expiry). */
+  expiryOnly?: boolean;
 }
 
-// Datetime-local inputs; emits ISO strings (UTC) or null. Used by membership and
-// (from US5) grant dialogs.
-export default function TemporalWindowField({ value, onChange }: Props) {
+// Datetime-local inputs in the browser's timezone; emits ISO strings (UTC) or null.
+// Used by membership and grant dialogs.
+export default function TemporalWindowField({ value, onChange, expiryOnly = false }: Props) {
   function toIso(local: string): string | null {
     return local ? new Date(local).toISOString() : null;
   }
@@ -22,16 +20,19 @@ export default function TemporalWindowField({ value, onChange }: Props) {
     const off = d.getTimezoneOffset();
     return new Date(d.getTime() - off * 60000).toISOString().slice(0, 16);
   }
+  const error = windowError(value);
   return (
     <Stack direction="row" spacing={2}>
-      <TextField
-        label="Effective from"
-        type="datetime-local"
-        size="small"
-        InputLabelProps={{ shrink: true }}
-        value={toLocal(value.effectiveFrom)}
-        onChange={(e) => onChange({ ...value, effectiveFrom: toIso(e.target.value) })}
-      />
+      {!expiryOnly && (
+        <TextField
+          label="Effective from"
+          type="datetime-local"
+          size="small"
+          InputLabelProps={{ shrink: true }}
+          value={toLocal(value.effectiveFrom)}
+          onChange={(e) => onChange({ ...value, effectiveFrom: toIso(e.target.value) })}
+        />
+      )}
       <TextField
         label="Expires at"
         type="datetime-local"
@@ -39,6 +40,8 @@ export default function TemporalWindowField({ value, onChange }: Props) {
         InputLabelProps={{ shrink: true }}
         value={toLocal(value.expiresAt)}
         onChange={(e) => onChange({ ...value, expiresAt: toIso(e.target.value) })}
+        error={!!error}
+        helperText={error ?? 'Leave empty for no expiry'}
       />
     </Stack>
   );

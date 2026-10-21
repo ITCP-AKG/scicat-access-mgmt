@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
@@ -11,8 +12,13 @@ from ..models.audit import ActorKind, AuditEntry
 
 
 class AuditService:
-    def __init__(self, app_db: AsyncIOMotorDatabase) -> None:
+    def __init__(
+        self,
+        app_db: AsyncIOMotorDatabase,
+        resolve_name: Callable[[str], Awaitable[str]] | None = None,
+    ) -> None:
         self.col = app_db.audit_log
+        self._resolve_name = resolve_name
 
     async def record(
         self,
@@ -26,8 +32,15 @@ class AuditService:
         after: dict[str, Any] | None = None,
         actor_kind: ActorKind = "user",
     ) -> AuditEntry:
+        actor_name = actor if actor == "system" else ""
+        if not actor_name and self._resolve_name:
+            try:
+                actor_name = await self._resolve_name(actor)
+            except Exception:  # noqa: BLE001 - a name lookup must never block auditing
+                actor_name = ""
         entry = AuditEntry(
             actor=actor,
+            actorName=actor_name,
             actorKind=actor_kind,
             action=action,
             entityType=entity_type,

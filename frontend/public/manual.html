@@ -110,32 +110,32 @@ access and writes it back into SciCat automatically.</p>
   <tr><td>Add Alice to group <code>catalysis-team</code></td><td>Writes <code>catalysis-team</code> into Alice's <code>UserIdentity.profile.accessGroups</code></td></tr>
   <tr><td>Apply group <code>proposal-42</code> to 30 datasets</td><td>Adds it to each dataset's <code>accessGroups</code> (or sets <code>ownerGroup</code>)</td></tr>
   <tr><td>Give a postdoc access until 31 Dec</td><td>Activates and then automatically revokes access on that date</td></tr>
-  <tr><td>Deactivate a departing user</td><td>Reassigns their owned datasets to a successor and logs every move</td></tr>
+  <tr><td>Deactivate a departing user</td><td>Ends their memberships, hands what they personally own to a successor, and logs every change</td></tr>
 </table>
 
 <!-- ───────────────────────── 2 ───────────────────────── -->
-<h2 class="sec" id="signin">2. Signing in (SSO)</h2>
-<p>Open the app and you are taken to the sign-in screen. Authentication is handled by SciCat, so you
-use the <strong>same institutional single sign-on (SSO)</strong> account you use for SciCat itself.</p>
+<h2 class="sec" id="signin">2. Signing in</h2>
+<p>Authentication is handled by SciCat, so you use the same account as for SciCat and catorga.</p>
 <ol class="steps">
-  <li>Click <strong>Sign in</strong> — you are redirected to your institution's SSO login.</li>
-  <li>Authenticate (username/password, 2FA, etc. as configured by your institution).</li>
-  <li>You return to the app, already signed in. Your name appears top-right, with <code>(admin)</code> if you are a SciCat administrator.</li>
+  <li><strong>Already signed in to catorga</strong> in this browser (including via SSO)? The app picks up that session automatically.</li>
+  <li>Otherwise choose <strong>University (LDAP)</strong> or <strong>SciCat account</strong> (functional accounts such as <code>admin</code>), enter your credentials and click <strong>Sign in</strong>.</li>
+  <li>Your name appears top-right, with <code>(admin)</code> or <code>(manager of N)</code>.</li>
 </ol>
 <div class="callout tip"><b>New users</b>
-First-time users who sign in via SSO are recognised automatically from their SciCat identity — there
-is no separate account to create here. What you can <em>do</em> depends on your role (next section).</div>
+People become visible here after their first SciCat/catorga login, which creates their SciCat identity —
+there is no separate account to create. What you can <em>do</em> depends on your role (next section).</div>
 <div class="callout"><b>Sessions</b>
-Your session uses your SciCat token. Use <strong>Sign out</strong> (top-right) on shared machines. If
-actions start returning "unauthorized", your token has expired — sign in again.</div>
+Your session uses your SciCat token. Use <strong>Sign out</strong> (top-right) on shared machines; it also
+stops this app from re-using the catorga session. When the token expires you are returned to the sign-in
+screen. "Service unavailable" errors mean SciCat itself is down — your session is kept.</div>
 
 <!-- ───────────────────────── 3 ───────────────────────── -->
 <h2 class="sec" id="roles">3. Roles &amp; permissions</h2>
 <table>
   <tr><th>Role</th><th>Can do</th></tr>
-  <tr><td><span class="pill admin">admin</span></td><td>Everything: create/delete any group, manage any membership, apply/remove grants, run projection &amp; reconcile, define transfer rules, deactivate users, and view the audit log.</td></tr>
-  <tr><td><span class="pill mgr">group manager</span></td><td>Manage membership and grants <em>for the groups they manage</em>. Managers are listed on each group (the <em>Managers</em> field).</td></tr>
-  <tr><td><span class="pill any">any user</span></td><td>Browse groups, members, a user's groups, the expiry dashboard and transfer history (read-only).</td></tr>
+  <tr><td><span class="pill admin">admin</span></td><td>Everything: create/delete/retire groups and set their managers, manage any membership, apply/remove any grant (including <code>owner</code> grants), run projection &amp; reconcile, define transfer rules, deactivate users, and view the audit log.</td></tr>
+  <tr><td><span class="pill mgr">group manager</span></td><td><em>For the groups they manage</em>: edit the description, add/remove members and change their dates, and grant <code>access</code> to resources that one of their own groups owns. Managers also see the Users, Resource Grants and Expiry pages.</td></tr>
+  <tr><td><span class="pill any">any user</span></td><td>See the list of groups. (Members, users and history are visible to managers and admins only.)</td></tr>
 </table>
 <div class="callout"><b>Why an action is greyed out or returns 403</b>
 Buttons that change data only appear for admins (and managers, where relevant). If you believe you
@@ -161,15 +161,21 @@ Each group's <code>name</code> is the exact string written into SciCat.</p>
 <div class="callout warn"><b>Reserved &amp; duplicate names are rejected</b>
 Names that collide with SciCat's special groups (<code>admin</code>, <code>globalaccess</code>, <code>all</code>,
 <code>ingestor</code>, <code>archivemanager</code>, …), with an existing group, or with a per-user group are
-refused with an explanatory error. Pick a distinct, descriptive name.</div>
+refused with an explanatory error. Names may contain letters, digits and <code>. _ : @ + -</code> (no spaces,
+max 64). Group names are case-sensitive in SciCat: <code>ROCK-IT</code> and <code>rock-it</code> are different groups.</div>
+<div class="callout"><b>Name already used in SciCat?</b>
+If some users already carry the name in SciCat (e.g. a lab group assigned before this app), the dialog
+says how many and asks you to either <strong>add them as members</strong> or <strong>remove it from them</strong> —
+once the group is managed here, only its members keep it.</div>
 
-<h3>Edit, retire or delete a group <span class="pill admin">admin</span></h3>
-<p>Click a group row to open its detail page. From there you can edit the description/category/managers,
-retire it (keeps history, stops new use), or delete it.</p>
-<div class="callout warn"><b>Delete is guarded</b>
-If a group still has active members, active resource grants, or is referenced by a transfer rule,
-deletion is blocked. Confirm the impact warning to cascade (members revoked, grants withdrawn,
-referencing rules removed) — or clean those up first.</div>
+<h3>Edit, retire or delete a group <span class="pill admin">admin</span> <span class="pill mgr">group manager</span></h3>
+<p>Click a group row to open its detail page and use <strong>Edit</strong>. Managers can change the
+description; admins also the category, the managers and the status. <strong>Retiring</strong> a group
+removes its access from everyone (memberships and grants are kept, so re-activating restores it).</p>
+<div class="callout warn"><b>Delete is guarded</b> <span class="pill admin">admin</span>
+The delete dialog shows how many members, grants and transfer rules still use the group. To delete
+anyway, tick the cascade option: memberships are ended, grants are withdrawn from the SciCat resources,
+and referencing rules are removed. Either way the name is removed from every user's SciCat groups.</div>
 
 <!-- ───────────────────────── 5 ───────────────────────── -->
 <h2 class="sec" id="membership">5. Membership</h2>
@@ -203,13 +209,15 @@ and review it per-person from the <strong>Users</strong> page.</p>
 <code>active</code> (counts toward access), <code>scheduled</code> (future start), <code>expired</code>
 (window passed), <code>revoked</code> (ended manually). Only <code>active</code> memberships grant access.</div>
 
-<h3>Remove a member <span class="pill admin">admin</span> <span class="pill mgr">group manager</span></h3>
-<p>In the Members panel, click <strong>Remove</strong> on the row. Access is withdrawn from SciCat right away.</p>
-<div class="callout warn"><b>Last-admin safeguard</b>
-You cannot remove the final member of a configured admin group — this prevents locking everyone out.
-Add another admin first.</div>
+<h3>Change dates or remove a member <span class="pill admin">admin</span> <span class="pill mgr">group manager</span></h3>
+<p>In the Members panel, <strong>Dates</strong> extends or shortens an active/scheduled membership;
+<strong>Remove</strong> ends it and withdraws the access from SciCat right away. Ended memberships cannot be
+revived — add the person again.</p>
+<div class="callout"><b>Administrators are safe</b>
+SciCat's admin groups are reserved names that this app never manages, so it cannot remove anyone's
+administrative access.</div>
 
-<h3>View a person's groups <span class="pill any">any user</span></h3>
+<h3>View a person's groups <span class="pill admin">admin</span> <span class="pill mgr">group manager</span></h3>
 <p>On the <strong>Users</strong> page, search a user to see every group they belong to, with status and
 dates, plus their current SciCat access groups.</p>
 
@@ -224,8 +232,12 @@ group's detail page.</p>
   <tr><td><strong>Reconcile</strong></td><td>Compares intended vs actual access across users, reports any <em>drift</em>, and fixes it.</td></tr>
 </table>
 <div class="callout tip"><b>Your manual SciCat edits are preserved</b>
-Projection only ever adds/removes the group names this app manages. Intrinsic strings (a user's personal
-group, <code>globalaccess</code>, role strings, groups created directly in SciCat) are never touched.</div>
+Projection only ever adds/removes the group names this app manages (and names of groups it deleted).
+Other strings (<code>globalaccess</code>, role strings, groups set elsewhere) are never touched.</div>
+<div class="callout"><b>Logins reset SciCat's groups — the app restores them</b>
+SciCat rewrites a user's access groups each time they log in. The app notices within ~15 seconds and
+restores the managed groups (immediately when catorga loads the user's permissions). Changes you make
+here take effect in SciCat right away, without the user logging in again.</div>
 <div class="example">
   <span class="tag">Example — recovering from drift</span>
   <p>Someone edited a user's access groups directly in SciCat and removed a managed group by mistake.
@@ -236,18 +248,19 @@ group, <code>globalaccess</code>, role strings, groups created directly in SciCa
 <!-- ───────────────────────── 7 ───────────────────────── -->
 <h2 class="sec" id="grants">7. Resource grants</h2>
 <p>Open <strong>Resource Grants</strong> to attach a group to SciCat resources — datasets, origdatablocks,
-proposals, samples, instruments or jobs — individually or in bulk.</p>
+proposals or samples — individually or in bulk. (SciCat instruments and jobs have no group fields, so they
+cannot be granted.) Managers see only resources owned by their own groups.</p>
 
 <h3>Apply a group to resources <span class="pill admin">admin</span> <span class="pill mgr">group manager</span></h3>
 <ol class="steps">
-  <li>Pick a <strong>Resource type</strong> (e.g. <em>dataset</em>) and optionally <strong>Search</strong> to narrow the list.</li>
-  <li>Tick the resources you want (the checkbox column; select many for a bulk apply).</li>
+  <li>Pick a <strong>Resource type</strong> (e.g. <em>dataset</em>) and optionally <strong>Search</strong> or filter by <strong>Owner group</strong>.</li>
+  <li>Tick the resources you want; selections are kept while you page with <strong>Next</strong>/<strong>Previous</strong>.</li>
   <li>Click <strong>Apply group (N)</strong>.</li>
   <li>Choose the <strong>Group</strong> and a <strong>Mode</strong>:
     <table>
       <tr><th>Mode</th><th>Effect</th></tr>
       <tr><td><code>access</code></td><td>Adds the group to each resource's <code>accessGroups</code> (read access). Existing groups are kept.</td></tr>
-      <tr><td><code>owner</code></td><td>Sets the resource's <code>ownerGroup</code> to this group. The previous owner is captured so it can be restored.</td></tr>
+      <tr><td><code>owner</code> <span class="pill admin">admin</span></td><td>Sets the resource's <code>ownerGroup</code> to this group. The previous owner is recorded and restored when the grant ends. A resource can have one owner grant at a time.</td></tr>
     </table>
   </li>
   <li>(Optional) set a time window, then <strong>Apply</strong>.</li>
@@ -263,8 +276,14 @@ other 48 still succeed and the 2 errors are listed — re-try just those.</div>
 </div>
 
 <h3>Remove a grant <span class="pill admin">admin</span> <span class="pill mgr">group manager</span></h3>
-<p>Removing a grant withdraws the group from the resource in SciCat. For an <code>owner</code> grant, the
-previously-captured owner group is restored.</p>
+<p>Use the <strong>Applied grants</strong> tab (or the grants panel on a group's page) and click
+<strong>Remove</strong>. A grant only undoes what it did: if the group already had access (or ownership)
+before the grant, it stays. For an <code>owner</code> grant the previous owner is restored — unless
+ownership was changed in SciCat meanwhile, in which case it is left alone.</p>
+<div class="callout"><b>"removal pending"</b>
+If SciCat refuses the change, the grant stays in effect, is marked <em>removal pending</em> with the error,
+and the scheduler retries every few minutes (or click <strong>Retry</strong>). Reconcile also re-adds access
+grants that were removed in SciCat by hand and reports owner changes made outside the app.</div>
 
 <!-- ───────────────────────── 8 ───────────────────────── -->
 <h2 class="sec" id="expiry">8. Expiry dashboard</h2>
@@ -282,42 +301,49 @@ lapses (open the group and edit/re-add the member with a new date).</div>
 
 <!-- ───────────────────────── 9 ───────────────────────── -->
 <h2 class="sec" id="transfers">9. Ownership transfer (departures)</h2>
-<p>When someone leaves, their owned resources must not be orphaned. <strong>Transfer rules</strong> map a
-departing user to a successor; deactivating the user then reassigns their resources automatically.</p>
+<p>When someone leaves, what they <em>personally</em> own must not be orphaned. That means resources whose
+owner group is their personal group (their username) and resources whose contact fields (owner, owner/contact
+email, proposal contact) name them. Data owned by shared groups such as projects or the lab stays with
+its group. <strong>Transfer rules</strong> map a departing user to a successor.</p>
 
 <h3>Create a transfer rule <span class="pill admin">admin</span></h3>
 <ol class="steps">
   <li>Open <strong>Transfers</strong> → <strong>New rule</strong>.</li>
-  <li>Give it a <strong>Name</strong> and optional <strong>Match</strong> filters (user ID, group, and/or category). Blank match = applies to anyone.</li>
-  <li>Choose the <strong>Successor type</strong> (user or group) and the <strong>Successor</strong>.</li>
-  <li>Set <strong>Priority</strong> (lower = checked first) and, for a user successor, optionally toggle
-      <strong>Transfer owner/email</strong> to also reassign <code>owner</code>/<code>ownerEmail</code>.</li>
-  <li><strong>Create</strong>.</li>
+  <li>Give it a <strong>Name</strong> and optional filters: a specific user, a group they were a member of when leaving, and/or that group's category. Blank = applies to anyone.</li>
+  <li>Choose the <strong>Successor type</strong> (user or group) and pick the <strong>Successor</strong>.</li>
+  <li>Set <strong>Priority</strong> (lower = checked first) and, for a user successor, whether to also hand over
+      the <strong>contact fields</strong> (owner, emails) that name the departing user.</li>
+  <li><strong>Save</strong>. Rules can be edited later.</li>
 </ol>
 
 <h3>Deactivate a departing user <span class="pill admin">admin</span></h3>
 <ol class="steps">
   <li>Go to <strong>Users</strong>, find the person.</li>
-  <li>Click <strong>Deactivate &amp; transfer</strong> and confirm.</li>
-  <li>A summary reports how many resources were transferred and how many need manual handling.</li>
+  <li>Click <strong>Deactivate &amp; transfer</strong> and confirm. All their memberships end (removing that access in SciCat) and their personal resources are handed over.</li>
+  <li>A summary reports how many resources were transferred, need manual handling, or failed.</li>
 </ol>
 <div class="example">
   <span class="tag">Example — postdoc handover</span>
-  <p>Rule: <em>match userId = j.lee</em>, successor <em>group</em> <code>schmidt-lab</code>. When Dr. Lee
-  leaves, click <strong>Deactivate &amp; transfer</strong>: every dataset Lee owned is reassigned to
-  <code>schmidt-lab</code>, each move recorded in the history with previous → new owner.</p>
+  <p>Rule: <em>was member of</em> <code>schmidt-lab</code>, successor <em>user</em> Prof. Schmidt, with contact
+  fields. When Dr. Lee leaves, click <strong>Deactivate &amp; transfer</strong>: datasets owned by Lee's
+  personal group move to Schmidt's, and where Lee is named as owner/contact, Schmidt is named instead.
+  Datasets owned by <code>schmidt-lab</code> itself are untouched. Each change is in the history.</p>
 </div>
-<div class="callout"><b>Safe to re-run; never silently orphaned</b>
-Transfers are idempotent — running a deactivation twice does not double-move anything. If <em>no</em>
-rule matches, the resources are flagged <code>pending_manual</code> (a warning banner on the Transfers
-page) instead of being left without an owner.</div>
+<div class="callout"><b>Never silently orphaned; safe to retry</b>
+If <em>no</em> rule matches, nothing is changed and the resources are flagged <code>pending_manual</code>
+(warning banner on the Transfers page). Each departure is listed under <strong>Departures</strong>; after
+adding or fixing a rule, click <strong>Retry</strong> — completed transfers are never repeated, failed and
+pending ones are re-evaluated, and ones you fixed by hand show as <code>resolved</code>. Departures that hit
+SciCat errors are retried automatically. Deactivation does not block the person's login; disable the
+account in the university directory for that.</div>
 <div class="callout tip"><b>Expiry can trigger transfers too</b>
-If a user's last access lapses by expiry, the scheduler runs the same transfer logic automatically,
-attributed to the <em>system</em> actor in the audit log.</div>
+If a user's last membership lapses, the scheduler runs the same transfer logic automatically (rules are
+matched against the group that lapsed), attributed to the <em>system</em> actor in the audit log.</div>
 
-<h3>Transfer history <span class="pill any">any user</span></h3>
-<p>The lower table on the Transfers page lists every reassignment: when, from whom, the resource, the new
-owner, and the outcome (<code>transferred</code> / <code>pending_manual</code> / <code>failed</code>).</p>
+<h3>Transfer history <span class="pill admin">admin</span></h3>
+<p>The lower table on the Transfers page lists every reassignment: when, from whom, the resource, what was
+changed, and the outcome (<code>transferred</code> / <code>pending_manual</code> / <code>failed</code> /
+<code>resolved</code>); hover the outcome for notes and errors.</p>
 
 <!-- ───────────────────────── 10 ───────────────────────── -->
 <h2 class="sec" id="audit">10. Audit log <span class="pill admin">admin</span></h2>

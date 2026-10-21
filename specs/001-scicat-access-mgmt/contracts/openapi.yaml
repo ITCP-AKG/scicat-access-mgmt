@@ -6,7 +6,9 @@ info:
     Backend API for the SciCat Access Management app. Source of truth for managed
     groups, memberships, resource grants, transfer rules and audit; projects
     effective access groups into SciCat. All endpoints require a SciCat JWT
-    Bearer token; mutating endpoints require admin or group-manager authorization.
+    Bearer token (401 = token rejected by SciCat, 503 = SciCat unavailable);
+    mutating endpoints require admin or group-manager authorization, directory and
+    grant views admin or manager rights, transfers/audit/projection admin rights.
 servers:
   - url: /api/v1
 security:
@@ -40,6 +42,12 @@ paths:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Group' } } } }
         '409': { $ref: '#/components/responses/Conflict' }     # reserved/duplicate name
         '403': { $ref: '#/components/responses/Forbidden' }
+  /groups/-/name-check:
+    get:
+      tags: [groups]
+      summary: Preflight for group creation (admin)
+      parameters: [ { name: name, in: query, required: true, schema: { type: string } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/NameCheck' } } } } }
   /groups/{name}:
     parameters: [ { name: name, in: path, required: true, schema: { type: string } } ]
     get:
@@ -92,6 +100,14 @@ paths:
         - { name: q, in: query, schema: { type: string }, description: name/username/email substring }
         - { name: limit, in: query, schema: { type: integer, default: 25 } }
       responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/DirectoryUser' } } } } } }
+  /users/{userId}:
+    parameters: [ { name: userId, in: path, required: true, schema: { type: string } } ]
+    get:
+      tags: [users]
+      summary: One directory user (active=false once departed)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DirectoryUser' } } } }
+        '404': { description: Unknown user }
   /users/{userId}/groups:
     parameters: [ { name: userId, in: path, required: true, schema: { type: string } } ]
     get:
@@ -102,8 +118,10 @@ paths:
     parameters: [ { name: userId, in: path, required: true, schema: { type: string } } ]
     post:
       tags: [users]
-      summary: Mark a user as departed; triggers ownership transfer per rules
-      responses: { '202': { description: Accepted, content: { application/json: { schema: { $ref: '#/components/schemas/TransferBatchResult' } } } } }
+      summary: Record a departure — ends the user's memberships and transfers what they personally own
+      responses:
+        '202': { description: Accepted, content: { application/json: { schema: { $ref: '#/components/schemas/TransferBatchResult' } } } }
+        '404': { description: Unknown user }
 
   # ---- Resource grants ----
   /grants:
@@ -117,23 +135,29 @@ paths:
       tags: [grants]
       summary: Apply a group to one or many resources (bulk)
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/GrantApply' } } } }
-      responses: { '207': { description: Multi-status per-item result, content: { application/json: { schema: { $ref: '#/components/schemas/BulkResult' } } } } }
+      responses:
+        '207': { description: Multi-status per-item result, content: { application/json: { schema: { $ref: '#/components/schemas/BulkResult' } } } }
+        '403': { description: Not a manager of the group, or owner mode by a non-admin }
+        '409': { description: Group is retired }
+        '422': { description: Invalid temporal window }
   /grants/{id}:
     parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
     delete:
       tags: [grants]
-      summary: Remove a grant (withdraws from SciCat resource)
-      responses: { '204': { description: Removed } }
+      summary: Remove a grant (withdraws only what the grant changed on the SciCat resource)
+      responses:
+        '204': { description: Removed (or already ended) }
+        '202': { description: SciCat refused the withdrawal; the grant stays effective with pendingRemoval and is retried, content: { application/json: { schema: { $ref: '#/components/schemas/ResourceGrant' } } } }
   /resources/{resourceType}:
     parameters: [ { name: resourceType, in: path, required: true, schema: { $ref: '#/components/schemas/ResourceType' } } ]
     get:
       tags: [grants]
-      summary: Browse SciCat resources (proxy, for the assignment UI)
+      summary: Browse SciCat resources (proxy for the assignment UI; non-admins see only resources their groups own)
       parameters:
         - { name: q, in: query, schema: { type: string } }
         - { name: ownerGroup, in: query, schema: { type: string } }
         - { name: skip, in: query, schema: { type: integer, default: 0 } }
-        - { name: limit, in: query, schema: { type: integer, default: 50 } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 100 } }
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ResourcePage' } } } } }
 
   # ---- Projection / sync ----
@@ -170,7 +194,21 @@ paths:
       parameters:
         - { name: fromUserId, in: query, schema: { type: string } }
         - { name: outcome, in: query, schema: { type: string } }
+        - { name: batchId, in: query, schema: { type: string } }
       responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/TransferRecord' } } } } } }
+  /transfer-batches:
+    get:
+      tags: [transfers]
+      summary: Departures (one per deactivation or lapse); each is the batch of its records
+      parameters:
+        - { name: userId, in: query, schema: { type: string } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Departure' } } } } } }
+  /transfer-batches/{id}/retry:
+    parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+    post:
+      tags: [transfers]
+      summary: Re-run a departure with the current rules (failed/pending records updated in place)
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/TransferBatchResult' } } } } }
 
   # ---- Expiry dashboard ----
   /expiry:
@@ -208,7 +246,8 @@ components:
     NotFound: { description: Not found }
     Conflict: { description: Conflict (reserved/duplicate name or still referenced) }
   schemas:
-    ResourceType: { type: string, enum: [dataset, origdatablock, proposal, sample, instrument, job] }
+    # SciCat v4.3.1 instruments and jobs carry no ownerGroup/accessGroups.
+    ResourceType: { type: string, enum: [dataset, origdatablock, proposal, sample] }
     TemporalWindow:
       type: object
       properties:
@@ -220,7 +259,7 @@ components:
       properties:
         name: { type: string }
         description: { type: string }
-        category: { type: string, enum: [research-group, project, proposal, instrument, other] }
+        category: { type: string, enum: [research-group, project, administrative, instrument, other] }
         managers: { type: array, items: { type: string } }
         status: { type: string, enum: [active, retired] }
         createdAt: { type: string, format: date-time }
@@ -234,14 +273,28 @@ components:
           properties:
             memberCount: { type: integer }
             grantCount: { type: integer }
+            transferRuleCount: { type: integer }
     GroupCreate:
       type: object
       required: [name, category]
       properties:
-        name: { type: string }
+        name: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,63}$' }
         description: { type: string }
         category: { type: string }
-        managers: { type: array, items: { type: string } }
+        managers: { type: array, items: { type: string }, description: directory userIds }
+        importHolders:
+          type: boolean
+          nullable: true
+          description: Required (else 409) when SciCat identities already carry the name — true adopts them as members, false strips it
+    NameCheck:
+      type: object
+      properties:
+        name: { type: string }
+        valid: { type: boolean }
+        reserved: { type: boolean }
+        exists: { type: boolean }
+        collidesWithUser: { type: boolean }
+        holders: { type: integer }
     GroupUpdate:
       type: object
       properties:
@@ -292,6 +345,12 @@ components:
         expiresAt: { type: string, format: date-time, nullable: true }
         status: { type: string, enum: [active, scheduled, expired, removed] }
         previousOwnerGroup: { type: string, nullable: true }
+        preexisting: { type: boolean, description: the group already held this before the grant; withdrawal leaves it }
+        pendingRemoval: { type: boolean }
+        lastError: { type: string, nullable: true }
+        endedAt: { type: string, format: date-time, nullable: true }
+        endedBy: { type: string, nullable: true }
+        supersededBy: { type: string, nullable: true }
     GrantApply:
       type: object
       required: [groupName, resourceType, resourceIds, mode]
@@ -319,7 +378,7 @@ components:
     ResourcePage:
       type: object
       properties:
-        total: { type: integer }
+        hasMore: { type: boolean }
         items:
           type: array
           items:
@@ -348,6 +407,18 @@ components:
               userId: { type: string }
               expected: { type: array, items: { type: string } }
               actual: { type: array, items: { type: string } }
+        grantDrift:
+          type: array
+          items:
+            type: object
+            properties:
+              grantId: { type: string }
+              groupName: { type: string }
+              resourceType: { type: string }
+              resourceId: { type: string }
+              mode: { type: string }
+              issue: { type: string }
+              fixed: { type: boolean }
         errors: { type: array, items: { type: string } }
     TransferRule:
       type: object
@@ -380,8 +451,11 @@ components:
         previousOwnerGroup: { type: string }
         newOwnerGroup: { type: string }
         ruleId: { type: string, nullable: true }
-        outcome: { type: string, enum: [transferred, pending_manual, failed] }
+        outcome: { type: string, enum: [transferred, pending_manual, failed, resolved] }
         error: { type: string, nullable: true }
+        notes: { type: array, items: { type: string } }
+        before: { type: object }
+        after: { type: object }
         at: { type: string, format: date-time }
         by: { type: string }
     TransferBatchResult:
@@ -389,6 +463,18 @@ components:
       properties:
         batchId: { type: string }
         records: { type: array, items: { $ref: '#/components/schemas/TransferRecord' } }
+        errors: { type: array, items: { type: string } }
+    Departure:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        reason: { type: string, enum: [departure, expiry, manual] }
+        groups: { type: array, items: { type: string } }
+        at: { type: string, format: date-time }
+        by: { type: string }
+        needsRetry: { type: boolean }
+        lastRunAt: { type: string, format: date-time, nullable: true }
     ExpiryDashboard:
       type: object
       properties:
@@ -401,6 +487,7 @@ components:
         id: { type: string }
         at: { type: string, format: date-time }
         actor: { type: string }
+        actorName: { type: string }
         actorKind: { type: string, enum: [user, system] }
         action: { type: string }
         entityType: { type: string }

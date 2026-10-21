@@ -1,4 +1,4 @@
-export type GroupCategory = 'research-group' | 'project' | 'proposal' | 'instrument' | 'other';
+export type GroupCategory = 'research-group' | 'project' | 'administrative' | 'instrument' | 'other';
 export type GroupStatus = 'active' | 'retired';
 
 export interface Group {
@@ -16,6 +16,26 @@ export interface Group {
 export interface GroupDetail extends Group {
   memberCount: number;
   grantCount: number;
+  transferRuleCount: number;
+}
+
+export interface GroupCreate {
+  name: string;
+  description?: string;
+  category: GroupCategory;
+  managers?: string[];
+  /** Required when SciCat users already carry the name: adopt them (true) or strip it (false). */
+  importHolders?: boolean | null;
+}
+
+export interface NameCheck {
+  name: string;
+  valid: boolean;
+  reserved: boolean;
+  exists: boolean;
+  collidesWithUser: boolean;
+  /** Users whose SciCat identity already carries this group string. */
+  holders: number;
 }
 
 export type MembershipStatus = 'active' | 'scheduled' | 'expired' | 'revoked';
@@ -49,20 +69,26 @@ export interface Me {
   managerOf: string[];
 }
 
+export interface GrantDriftItem {
+  grantId: string;
+  groupName: string;
+  resourceType: string;
+  resourceId: string;
+  mode: string;
+  issue: string;
+  fixed: boolean;
+}
+
 export interface SyncResult {
   ranAt: string;
   usersUpdated: number;
   drift: { userId: string; expected: string[]; actual: string[] }[];
+  grantDrift: GrantDriftItem[];
   errors: string[];
 }
 
-export type ResourceType =
-  | 'dataset'
-  | 'origdatablock'
-  | 'proposal'
-  | 'sample'
-  | 'instrument'
-  | 'job';
+// Only these SciCat v4.3.1 types carry ownerGroup/accessGroups (no instruments/jobs).
+export type ResourceType = 'dataset' | 'origdatablock' | 'proposal' | 'sample';
 export type GrantMode = 'owner' | 'access';
 export type GrantStatus = 'active' | 'scheduled' | 'expired' | 'removed';
 
@@ -76,8 +102,14 @@ export interface ResourceGrant {
   expiresAt: string | null;
   status: GrantStatus;
   previousOwnerGroup: string | null;
+  preexisting: boolean;
   appliedAt: string;
   appliedBy: string;
+  endedAt: string | null;
+  endedBy: string | null;
+  /** SciCat refused the withdrawal: still effective, retried by the scheduler. */
+  pendingRemoval: boolean;
+  lastError: string | null;
 }
 
 export interface BulkResultItem {
@@ -102,8 +134,8 @@ export interface ResourceSummary {
 }
 
 export interface ResourcePage {
-  total: number;
   items: ResourceSummary[];
+  hasMore: boolean;
 }
 
 export interface ExpiryDashboard {
@@ -113,7 +145,7 @@ export interface ExpiryDashboard {
 }
 
 export type SuccessorType = 'user' | 'group';
-export type TransferOutcome = 'transferred' | 'pending_manual' | 'failed';
+export type TransferOutcome = 'transferred' | 'pending_manual' | 'failed' | 'resolved';
 
 export interface TransferMatch {
   userId: string | null;
@@ -146,6 +178,9 @@ export interface TransferRecord {
   ruleId: string | null;
   outcome: TransferOutcome;
   error: string | null;
+  notes: string[];
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
   at: string;
   by: string;
 }
@@ -153,6 +188,19 @@ export interface TransferRecord {
 export interface TransferBatchResult {
   batchId: string;
   records: TransferRecord[];
+  errors: string[];
+}
+
+/** One departure (deactivation or lapse of the last membership) = one transfer batch. */
+export interface Departure {
+  id: string;
+  userId: string;
+  reason: 'departure' | 'expiry' | 'manual';
+  groups: string[];
+  at: string;
+  by: string;
+  needsRetry: boolean;
+  lastRunAt: string | null;
 }
 
 export type ActorKind = 'user' | 'system';
@@ -161,6 +209,7 @@ export interface AuditEntry {
   id: string;
   at: string;
   actor: string;
+  actorName?: string;
   actorKind: ActorKind;
   action: string;
   entityType: string;

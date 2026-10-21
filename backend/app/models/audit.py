@@ -16,6 +16,7 @@ class AuditEntry(BaseModel):
     id: str = Field(default_factory=new_id)
     at: datetime = Field(default_factory=utcnow)
     actor: str
+    actorName: str = ""  # readable username at the time of the action
     actorKind: ActorKind = "user"
     action: str
     entityType: str
