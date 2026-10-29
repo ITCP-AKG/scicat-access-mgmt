@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from ..context import AppContext
 from ..models.membership import compute_status
 from ..models.resource_grant import GrantDriftItem
+from .directory.scicat_local import identity_filter
 
 
 class DriftItem(BaseModel):
@@ -94,9 +95,7 @@ class ProjectionService:
         return Registry(names=names, active=active)
 
     async def _find_identity(self, user_id: str) -> dict[str, Any] | None:
-        return await self.identities.find_one(
-            {"$or": [{"userId": user_id}, {"profile.id": user_id}]}
-        )
+        return await self.identities.find_one(identity_filter(user_id))
 
     async def _active_groups_for_user(self, user_id: str, registry: Registry) -> set[str]:
         now = self.ctx.now()

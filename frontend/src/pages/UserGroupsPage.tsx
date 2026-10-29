@@ -60,6 +60,11 @@ export default function UserGroupsPage() {
           <Typography variant="subtitle2">Find a user to see their groups</Typography>
           <UserPicker value={user} onChange={setUser} />
           {user && (
+            <Typography variant="body2" color="text.secondary">
+              Account: {user.username || '—'} · E-mail: {user.email || '—'} · User ID: {user.userId}
+            </Typography>
+          )}
+          {user && (
             <Stack direction="row" spacing={1} alignItems="center">
               {!user.active && <Chip size="small" color="warning" label="departed" />}
               <Typography variant="body2" color="text.secondary">

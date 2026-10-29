@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from ..auth.deps import current_user, get_ctx, managed_groups, require_admin, require_any_manager
 from ..auth.jwt import AuthError, AuthUnavailable, CurrentUser, validate_token
 from ..context import AppContext
-from ..models.directory import DirectoryUser
+from ..models.directory import DirectoryUser, DisplayNameLookup
 from ..models.membership import Membership
 from ..models.transfer import TransferBatchResult
 from ..services.memberships import MembershipService
@@ -42,13 +42,29 @@ async def me(
             logger.warning("whoami refresh after projection failed for %s", user.userId)
     is_admin = user.is_admin(ctx.settings.admin_groups)
     manager_of = await managed_groups(user, ctx)
+    names = await ctx.directory.display_names([user.username])
     return {
         "userId": user.userId,
         "username": user.username,
+        "displayName": names.get(user.username, user.username),
+        "email": user.email,
         "currentGroups": user.currentGroups,
         "isAdmin": is_admin,
         "managerOf": manager_of,
     }
+
+
+@router.post("/users/display-names", response_model=dict[str, str])
+async def display_names(
+    body: DisplayNameLookup,
+    ctx: AppContext = Depends(get_ctx),
+    _: CurrentUser = Depends(current_user),
+):
+    """Resolve usernames (owner / createdBy / personal ownerGroup values) to display names
+    for any signed-in user. Only names are returned — no e-mail, no user id; unknown
+    usernames (real groups, functional accounts) are left out."""
+    wanted = list(dict.fromkeys(u.strip() for u in body.usernames if u and u.strip()))
+    return await ctx.directory.display_names(wanted)
 
 
 @router.get("/users", response_model=list[DirectoryUser])

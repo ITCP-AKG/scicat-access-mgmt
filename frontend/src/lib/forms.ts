@@ -25,7 +25,10 @@ export function windowError(value: TemporalWindow): string | null {
   return null;
 }
 
+/** Admin-facing label: name, account alias and e-mail are all shown explicitly here
+ *  (catorga itself only ever shows the name). */
 export function userLabel(u: DirectoryUser): string {
   const name = u.displayName || u.username || u.userId;
-  return `${name} (${u.email || u.userId})${u.active ? '' : ' — departed'}`;
+  const parts = [name, u.username && u.username !== name ? u.username : '', u.email].filter(Boolean);
+  return `${parts.join(' · ')}${u.active ? '' : ' — departed'}`;
 }

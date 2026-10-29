@@ -64,6 +64,8 @@ export interface DirectoryUser {
 export interface Me {
   userId: string;
   username: string;
+  displayName?: string;
+  email?: string;
   currentGroups: string[];
   isAdmin: boolean;
   managerOf: string[];

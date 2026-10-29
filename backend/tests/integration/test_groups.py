@@ -61,3 +61,34 @@ async def test_non_admin_cannot_create(client, user_headers):
         "/api/v1/groups", headers=user_headers, json={"name": "x", "category": "other"}
     )
     assert resp.status_code == 403
+
+
+async def test_manager_with_objectid_user_id(client, ctx, admin_headers):
+    """Real SciCat identities store `userId` as an ObjectId, and LDAP/OIDC accounts put the
+    IdP subject (not that id) in `profile.id`; the id the directory hands out must resolve."""
+    from bson import ObjectId
+
+    oid = ObjectId()
+    await ctx.scicat_db["UserIdentity"].insert_one(
+        {
+            "userId": oid,
+            "provider": "oidc",
+            "profile": {"id": "a1b2c3d4e5f6", "username": "carol", "accessGroups": []},
+        }
+    )
+    found = await client.get("/api/v1/users", headers=admin_headers, params={"q": "carol"})
+    user_id = found.json()[0]["userId"]
+    assert user_id == str(oid)
+
+    resp = await client.post(
+        "/api/v1/groups", headers=admin_headers,
+        json={"name": "g-oid", "category": "other", "managers": [user_id]},
+    )
+    assert resp.status_code == 201, resp.text
+
+    resp = await client.post(
+        "/api/v1/groups/g-oid/members", headers=admin_headers, json={"userId": user_id}
+    )
+    assert resp.status_code == 201, resp.text
+    identity = await ctx.scicat_db["UserIdentity"].find_one({"userId": oid})
+    assert "g-oid" in identity["profile"]["accessGroups"]
