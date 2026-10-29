@@ -226,3 +226,13 @@ class ScicatClient:
                 resp.status_code,
             )
         return resp.json()
+
+    async def create_resource(self, resource_type: str, body: dict[str, Any]) -> dict[str, Any]:
+        path, _ = RESOURCE_MAP[resource_type]
+        resp = await self._authed("POST", f"/{path}", json=body)
+        if resp.status_code not in (200, 201):
+            raise ScicatError(
+                f"create {resource_type} failed: {resp.status_code} {resp.text[:300]}",
+                resp.status_code,
+            )
+        return resp.json()

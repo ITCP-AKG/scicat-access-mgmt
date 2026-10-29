@@ -42,7 +42,8 @@ PATCHABLE: dict[str, set[str]] = {
     "dataset": _OWNABLE | {"owner", "ownerEmail", "orcidOfOwner", "contactEmail"},
     "origdatablock": _OWNABLE,
     "proposal": _OWNABLE
-    | {"email", "firstname", "lastname", "pi_email", "pi_firstname", "pi_lastname"},
+    | {"email", "firstname", "lastname", "pi_email", "pi_firstname", "pi_lastname"}
+    | {"title", "abstract", "startTime", "endTime"},
     "sample": _OWNABLE | {"owner"},
 }
 
@@ -151,6 +152,13 @@ class FakeScicat(ScicatClient):
         self.patches.append((resource_type, resource_id, copy.deepcopy(body)))
         self.resources[key].update(copy.deepcopy(body))
         return copy.deepcopy(self.resources[key])
+
+    async def create_resource(self, resource_type: str, body: dict):
+        rid = body[RESOURCE_MAP[resource_type][1]]
+        if (resource_type, rid) in self.resources:
+            raise ScicatError(f"create {resource_type} failed: 409 duplicate {rid}", 409)
+        self.resources[(resource_type, rid)] = copy.deepcopy(body)
+        return copy.deepcopy(body)
 
     async def list_resources(
         self, resource_type, where=None, *, limit=50, skip=0, order=None
