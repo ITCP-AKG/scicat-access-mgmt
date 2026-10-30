@@ -25,6 +25,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { GrantsApi, GroupsApi, InvitesApi, MembersApi, ProjectionApi } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import UserName from '../components/UserName';
 import UserPicker, { UserMultiPicker } from '../components/UserPicker';
 import InviteDialog from '../components/InviteDialog';
 import TemporalWindowField from '../components/TemporalWindowField';
@@ -302,7 +303,12 @@ export default function GroupDetailPage() {
   });
 
   const memberColumns: GridColDef<Membership>[] = [
-    { field: 'userDisplay', headerName: 'User', flex: 1 },
+    {
+      field: 'userDisplay',
+      headerName: 'User',
+      flex: 1,
+      renderCell: (p) => <UserName userId={p.row.userId} fallback={p.row.userDisplay} />,
+    },
     { field: 'userId', headerName: 'User ID', flex: 1 },
     {
       field: 'status',
@@ -554,7 +560,9 @@ export default function GroupDetailPage() {
       </Dialog>
 
       <Dialog open={!!editing} onClose={() => setEditing(null)} fullWidth maxWidth="sm">
-        <DialogTitle>Membership dates — {editing?.userDisplay || editing?.userId}</DialogTitle>
+        <DialogTitle>
+          Membership dates — {editing && <UserName userId={editing.userId} fallback={editing.userDisplay} />}
+        </DialogTitle>
         <DialogContent>
           <Box mt={1}>
             <TemporalWindowField value={editWindow} onChange={setEditWindow} />

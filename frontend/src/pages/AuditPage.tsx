@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import {
   Box,
+  Checkbox,
   Chip,
   Dialog,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   MenuItem,
   Paper,
   Stack,
@@ -14,12 +16,16 @@ import {
 import { DataGrid, type GridColDef } from '@mui/x-data-grid';
 import { useQuery } from '@tanstack/react-query';
 import { AuditApi } from '../api/endpoints';
-import type { AuditEntry } from '../api/types';
+import UserName from '../components/UserName';
+import UserPicker from '../components/UserPicker';
+import type { AuditEntry, DirectoryUser } from '../api/types';
 
 const ENTITY_TYPES = ['', 'group', 'membership', 'grant', 'projection', 'transfer', 'user'];
 
 export default function AuditPage() {
-  const [actor, setActor] = useState('');
+  const [actorUser, setActorUser] = useState<DirectoryUser | null>(null);
+  const [systemOnly, setSystemOnly] = useState(false);
+  const actor = systemOnly ? 'system' : actorUser?.userId ?? '';
   const [entityType, setEntityType] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -50,11 +56,21 @@ export default function AuditPage() {
       field: 'actor',
       headerName: 'Actor',
       flex: 1,
-      renderCell: (p) => p.row.actorName || p.value,
+      renderCell: (p) =>
+        p.row.actorKind === 'user' ? (
+          <UserName userId={p.row.actor} fallback={p.row.actorName} />
+        ) : (
+          p.row.actorName || p.value
+        ),
     },
     { field: 'action', headerName: 'Action', flex: 1 },
     { field: 'entityType', headerName: 'Entity', width: 120 },
-    { field: 'entityId', headerName: 'Target', flex: 1 },
+    {
+      field: 'entityId',
+      headerName: 'Target',
+      flex: 1,
+      renderCell: (p) => (p.row.entityType === 'user' ? <UserName userId={p.value} /> : p.value),
+    },
     { field: 'summary', headerName: 'Summary', flex: 1.5 },
   ];
 
@@ -65,7 +81,20 @@ export default function AuditPage() {
       </Typography>
       <Paper sx={{ p: 2, mb: 2 }}>
         <Stack direction="row" spacing={2} flexWrap="wrap">
-          <TextField label="Actor" size="small" value={actor} onChange={(e) => setActor(e.target.value)} />
+          <Box sx={{ width: 320 }}>
+            <UserPicker
+              label="Actor"
+              value={systemOnly ? null : actorUser}
+              onChange={(u) => {
+                setActorUser(u);
+                if (u) setSystemOnly(false);
+              }}
+            />
+          </Box>
+          <FormControlLabel
+            control={<Checkbox size="small" checked={systemOnly} onChange={(e) => setSystemOnly(e.target.checked)} />}
+            label="System only"
+          />
           <TextField
             select
             label="Entity type"
@@ -112,7 +141,8 @@ export default function AuditPage() {
 
       <Dialog open={!!selected} onClose={() => setSelected(null)} fullWidth maxWidth="md">
         <DialogTitle>
-          {selected?.action} — {selected?.entityType}/{selected?.entityId}
+          {selected?.action} — {selected?.entityType}/
+          {selected?.entityType === 'user' ? <UserName userId={selected.entityId} /> : selected?.entityId}
         </DialogTitle>
         <DialogContent>
           <Stack direction="row" spacing={4}>

@@ -19,9 +19,11 @@ import {
 } from '@mui/material';
 import { DataGrid, type GridColDef } from '@mui/x-data-grid';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { GroupsApi, TransfersApi, UsersApi } from '../api/endpoints';
+import { GroupsApi, TransfersApi } from '../api/endpoints';
 import { ApiError } from '../api/client';
+import UserName from '../components/UserName';
 import UserPicker from '../components/UserPicker';
+import { useDirectoryUser } from '../hooks/useDirectoryUser';
 import { CATEGORIES } from '../lib/forms';
 import type {
   Departure,
@@ -45,17 +47,6 @@ const EMPTY: TransferRuleCreate = {
 const outcomeColor = (o: string) =>
   o === 'transferred' || o === 'resolved' ? 'success' : o === 'pending_manual' ? 'warning' : 'error';
 const fmtDate = (v: { value: string | null }) => (v.value ? new Date(v.value).toLocaleString() : '—');
-
-/** A stored userId shown as a picker value (resolved to the directory entry). */
-function useDirectoryUser(userId: string | null) {
-  return useQuery({
-    queryKey: ['user', userId],
-    queryFn: () => UsersApi.get(userId as string),
-    enabled: !!userId,
-    staleTime: 300_000,
-    retry: false,
-  }).data;
-}
 
 function RuleDialog({ rule, onClose }: { rule: TransferRule | null; onClose: () => void }) {
   const qc = useQueryClient();
@@ -242,20 +233,34 @@ export default function TransferRulesPage() {
       field: 'match',
       headerName: 'Matches',
       flex: 1,
-      renderCell: (p) =>
-        [
-          p.row.match.userId && `user ${p.row.match.userId}`,
-          p.row.match.groupName && `group ${p.row.match.groupName}`,
-          p.row.match.category && `category ${p.row.match.category}`,
-        ]
-          .filter(Boolean)
-          .join(' / ') || 'anyone',
+      renderCell: (p) => {
+        const { userId, groupName, category } = p.row.match;
+        const parts = [
+          userId && (
+            <span key="user">
+              user <UserName userId={userId} />
+            </span>
+          ),
+          groupName && <span key="group">group {groupName}</span>,
+          category && <span key="category">category {category}</span>,
+        ].filter(Boolean);
+        if (!parts.length) return 'anyone';
+        return <span>{parts.flatMap((part, i) => (i ? [' / ', part] : [part]))}</span>;
+      },
     },
     {
       field: 'successor',
       headerName: 'Successor',
       flex: 1,
-      renderCell: (p) => `${p.row.successorType}: ${p.value}${p.row.transferOwner && p.row.successorType === 'user' ? ' (+contact)' : ''}`,
+      renderCell: (p) =>
+        p.row.successorType === 'user' ? (
+          <span>
+            user: <UserName userId={p.row.successor} />
+            {p.row.transferOwner ? ' (+contact)' : ''}
+          </span>
+        ) : (
+          `group: ${p.row.successor}`
+        ),
     },
     {
       field: 'enabled',
@@ -283,7 +288,7 @@ export default function TransferRulesPage() {
 
   const batchColumns: GridColDef<Departure>[] = [
     { field: 'at', headerName: 'When', width: 175, valueFormatter: fmtDate },
-    { field: 'userId', headerName: 'User', flex: 1 },
+    { field: 'userId', headerName: 'User', flex: 1, renderCell: (p) => <UserName userId={p.row.userId} /> },
     { field: 'reason', headerName: 'Reason', width: 100 },
     { field: 'groups', headerName: 'Groups', flex: 1, renderCell: (p) => (p.value as string[]).join(', ') || '—' },
     {
@@ -311,7 +316,12 @@ export default function TransferRulesPage() {
 
   const recordColumns: GridColDef<TransferRecord>[] = [
     { field: 'at', headerName: 'When', width: 175, valueFormatter: fmtDate },
-    { field: 'fromUserId', headerName: 'From user', flex: 0.8 },
+    {
+      field: 'fromUserId',
+      headerName: 'From user',
+      flex: 0.8,
+      renderCell: (p) => <UserName userId={p.row.fromUserId} />,
+    },
     { field: 'resourceType', headerName: 'Type', width: 110 },
     { field: 'resourceId', headerName: 'Resource', flex: 1.2 },
     {

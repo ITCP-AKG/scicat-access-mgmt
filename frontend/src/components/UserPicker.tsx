@@ -4,7 +4,8 @@ import { useQueries, useQuery } from '@tanstack/react-query';
 import { UsersApi } from '../api/endpoints';
 import type { DirectoryUser } from '../api/types';
 import { useDebounced } from '../hooks/useDebounced';
-import { userLabel } from '../lib/forms';
+import { directoryUserQuery } from '../hooks/useDirectoryUser';
+import { userLabel, userName } from '../lib/forms';
 
 /** Debounced directory search; react-query keys by query, so stale answers never win. */
 function useUserSearch(input: string) {
@@ -68,14 +69,7 @@ interface MultiProps {
 export function UserMultiPicker({ value, onChange, label = 'Managers' }: MultiProps) {
   const [input, setInput] = useState('');
   const { options, loading } = useUserSearch(input);
-  const resolved = useQueries({
-    queries: value.map((id) => ({
-      queryKey: ['user', id],
-      queryFn: () => UsersApi.get(id),
-      staleTime: 300_000,
-      retry: false,
-    })),
-  });
+  const resolved = useQueries({ queries: value.map(directoryUserQuery) });
   const selected: DirectoryUser[] = value.map(
     (id, i) =>
       resolved[i]?.data ?? {
@@ -104,7 +98,7 @@ export function UserMultiPicker({ value, onChange, label = 'Managers' }: MultiPr
             {...getTagProps({ index })}
             key={u.userId}
             size="small"
-            label={u.displayName || u.username}
+            label={userName(u)}
           />
         ))
       }

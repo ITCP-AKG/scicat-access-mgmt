@@ -25,10 +25,15 @@ export function windowError(value: TemporalWindow): string | null {
   return null;
 }
 
+/** The name a user is shown by everywhere in the app. */
+export function userName(u: DirectoryUser): string {
+  return u.displayName || u.username || u.userId;
+}
+
 /** Admin-facing label: name, account alias and e-mail are all shown explicitly here
  *  (catorga itself only ever shows the name). */
 export function userLabel(u: DirectoryUser): string {
-  const name = u.displayName || u.username || u.userId;
+  const name = userName(u);
   const parts = [name, u.username && u.username !== name ? u.username : '', u.email].filter(Boolean);
   return `${parts.join(' · ')}${u.active ? '' : ' — departed'}`;
 }

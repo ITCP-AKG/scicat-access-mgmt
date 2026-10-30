@@ -10,6 +10,7 @@ import {
 import { DataGrid, type GridColDef, type GridValidRowModel } from '@mui/x-data-grid';
 import { useQuery } from '@tanstack/react-query';
 import { ExpiryApi } from '../api/endpoints';
+import UserName from '../components/UserName';
 
 const WINDOWS = [7, 14, 30, 60, 90];
 
@@ -17,7 +18,12 @@ const fmt = (v: { value: string | null }) =>
   v.value ? new Date(v.value).toLocaleString() : '—';
 
 const membershipColumns: GridColDef[] = [
-  { field: 'userDisplay', headerName: 'User', flex: 1 },
+  {
+    field: 'userDisplay',
+    headerName: 'User',
+    flex: 1,
+    renderCell: (p) => <UserName userId={p.row.userId} fallback={p.row.userDisplay} />,
+  },
   { field: 'groupName', headerName: 'Group', flex: 1 },
   { field: 'status', headerName: 'Status', width: 110 },
   { field: 'expiresAt', headerName: 'Expires', width: 190, valueFormatter: fmt },

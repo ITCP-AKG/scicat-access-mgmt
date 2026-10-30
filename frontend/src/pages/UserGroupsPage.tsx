@@ -7,6 +7,7 @@ import InviteDialog from '../components/InviteDialog';
 import { GroupsApi, UsersApi } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import { userName } from '../lib/forms';
 import type { DirectoryUser } from '../api/types';
 
 // View a user's group memberships (the user-centric side of US2) + departure (US6), and
@@ -92,7 +93,7 @@ export default function UserGroupsPage() {
               onClick={() => {
                 if (
                   confirm(
-                    `Deactivate ${user.displayName || user.userId}? This ends all their group memberships ` +
+                    `Deactivate ${userName(user)}? This ends all their group memberships ` +
                       '(removing that access in SciCat) and hands their personally owned resources to the ' +
                       'matching transfer rule. Their SciCat login itself must be disabled in the identity provider.',
                   )
