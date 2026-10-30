@@ -490,23 +490,6 @@ export default function GroupDetailPage() {
             </div>
           </Paper>
 
-          <Paper sx={{ p: 2, mb: 2 }}>
-            <Typography variant="h6" mb={1}>
-              Invitations
-            </Typography>
-            <Divider sx={{ mb: 1 }} />
-            <div style={{ height: 260, width: '100%' }}>
-              <DataGrid
-                rows={invites.data ?? []}
-                columns={inviteColumns}
-                getRowId={(r) => r.id}
-                loading={invites.isLoading}
-                disableRowSelectionOnClick
-                density="compact"
-              />
-            </div>
-          </Paper>
-
           <Paper sx={{ p: 2 }}>
             <Stack direction="row" justifyContent="space-between" alignItems="center" mb={1}>
               <Typography variant="h6">Resource grants</Typography>
@@ -522,6 +505,23 @@ export default function GroupDetailPage() {
                 columns={grantColumns}
                 getRowId={(r) => r.id}
                 loading={grants.isLoading}
+                disableRowSelectionOnClick
+                density="compact"
+              />
+            </div>
+          </Paper>
+
+          <Paper sx={{ p: 2, mb: 2 }}>
+            <Typography variant="h6" mb={1}>
+              Invitations
+            </Typography>
+            <Divider sx={{ mb: 1 }} />
+            <div style={{ height: 260, width: '100%' }}>
+              <DataGrid
+                rows={invites.data ?? []}
+                columns={inviteColumns}
+                getRowId={(r) => r.id}
+                loading={invites.isLoading}
                 disableRowSelectionOnClick
                 density="compact"
               />
