@@ -43,9 +43,13 @@ function dropToken(token: string): void {
   else localStorage.setItem(SKIP_CATORGA_KEY, token);
 }
 
-/** Sign out of this app (catorga itself stays signed in). */
+/** Sign out of this app (catorga itself stays signed in). Signing out of our own login
+ * leaves the catorga session adoptable: it was not the one in use here. */
 export function clearToken(): void {
-  localStorage.removeItem(TOKEN_KEY);
+  if (localStorage.getItem(TOKEN_KEY)) {
+    localStorage.removeItem(TOKEN_KEY);
+    return;
+  }
   const catorga = catorgaToken();
   if (catorga) localStorage.setItem(SKIP_CATORGA_KEY, catorga);
 }

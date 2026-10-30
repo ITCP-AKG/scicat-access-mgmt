@@ -9,7 +9,7 @@ from ..context import AppContext
 from ..models.group import Group, GroupCreate, GroupDetail, GroupUpdate
 from ..models.membership import MembershipCreate
 from .grants import GrantService
-from .memberships import MembershipService
+from .memberships import MembershipService, reactivate
 from .projection import ProjectionService
 
 # Group names travel as URL path segments and SciCat group strings: keep them simple.
@@ -117,7 +117,9 @@ class GroupService:
             else:
                 await self.projection.project_users(holders, actor=actor)
         if payload.managers:
-            # managers get member access
+            # managers get member access (and a departed user made manager is back)
+            for m in payload.managers:
+                await reactivate(self.ctx, m, actor, f"{m} re-joined as manager of {name}")
             await self.projection.project_users(payload.managers, actor=actor)
         return group
 
@@ -178,7 +180,10 @@ class GroupService:
             await self.projection.project_group(name, actor=actor)
         if "managers" in changes:
             # managers get member access: grant it to new ones, withdraw it from removed ones
-            changed = set(doc.get("managers") or []) ^ set(changes["managers"])
+            previous = set(doc.get("managers") or [])
+            for m in sorted(set(changes["managers"]) - previous):
+                await reactivate(self.ctx, m, actor, f"{m} re-joined as manager of {name}")
+            changed = previous ^ set(changes["managers"])
             if changed:
                 await self.projection.project_users(changed, actor=actor)
         return Group(**updated)

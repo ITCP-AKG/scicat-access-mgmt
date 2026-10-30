@@ -56,6 +56,17 @@ class MembershipEndedError(MembershipError):
     pass
 
 
+async def reactivate(ctx: AppContext, user_id: str, actor: str, summary: str) -> bool:
+    """Clear a departure: the user re-joined a group or became a manager."""
+    if not await ctx.app_db.departed_users.find_one_and_delete({"_id": user_id}):
+        return False
+    await ctx.audit.record(
+        actor=actor, action="user.reactivate", entity_type="user", entity_id=user_id,
+        summary=summary,
+    )
+    return True
+
+
 class MembershipService:
     def __init__(self, ctx: AppContext) -> None:
         self.ctx = ctx
@@ -126,11 +137,9 @@ class MembershipService:
             summary=f"added {payload.userId} to {group_name}",
             after=membership.model_dump(mode="json"),
         )
-        if await self.ctx.app_db.departed_users.find_one_and_delete({"_id": payload.userId}):
-            await self.ctx.audit.record(
-                actor=actor, action="user.reactivate", entity_type="user",
-                entity_id=payload.userId, summary=f"{payload.userId} re-joined via {group_name}",
-            )
+        await reactivate(
+            self.ctx, payload.userId, actor, f"{payload.userId} re-joined via {group_name}"
+        )
         await self.projection.project_user(payload.userId, actor=actor)
         return membership
 

@@ -74,6 +74,9 @@ function CreateGroupDialog({ open, onClose }: { open: boolean; onClose: () => vo
       }),
     onSuccess: (group) => {
       qc.invalidateQueries({ queryKey: ['groups'] });
+      // a departed user made manager is reactivated
+      qc.invalidateQueries({ queryKey: ['user'] });
+      qc.invalidateQueries({ queryKey: ['user-search'] });
       reset();
       onClose();
       navigate(`/groups/${encodeURIComponent(group.name)}`);

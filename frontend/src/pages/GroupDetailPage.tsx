@@ -44,6 +44,9 @@ const fmtDate = (v: { value: string | null }) => (v.value ? new Date(v.value).to
 const errorText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 const OPEN = new Set(['active', 'scheduled']);
 
+// Managers have member access through their role, not a membership: they get a read-only row.
+type MemberRow = (Membership & { kind: 'membership' }) | { kind: 'manager'; id: string; userId: string };
+
 function EditGroupDialog({
   group,
   isAdmin,
@@ -71,6 +74,9 @@ function EditGroupDialog({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['group', group.name] });
       qc.invalidateQueries({ queryKey: ['groups'] });
+      // a departed user made manager is reactivated
+      qc.invalidateQueries({ queryKey: ['user'] });
+      qc.invalidateQueries({ queryKey: ['user-search'] });
       onSaved(status !== group.status ? `Group ${status}; members re-projected` : 'Group updated');
       onClose();
     },
@@ -302,19 +308,28 @@ export default function GroupDetailPage() {
       ),
   });
 
-  const memberColumns: GridColDef<Membership>[] = [
+  const memberColumns: GridColDef<MemberRow>[] = [
     {
       field: 'userDisplay',
       headerName: 'User',
       flex: 1,
-      renderCell: (p) => <UserName userId={p.row.userId} fallback={p.row.userDisplay} />,
+      renderCell: (p) => (
+        <UserName userId={p.row.userId} fallback={p.row.kind === 'membership' ? p.row.userDisplay : undefined} />
+      ),
     },
     { field: 'userId', headerName: 'User ID', flex: 1 },
     {
       field: 'status',
       headerName: 'Status',
       width: 120,
-      renderCell: (p) => <Chip size="small" label={p.value} color={p.value === 'active' ? 'success' : 'default'} />,
+      valueGetter: (p) => (p.row.kind === 'manager' ? 'manager' : p.row.status),
+      renderCell: (p) => (
+        <Chip
+          size="small"
+          label={p.value}
+          color={p.value === 'manager' ? 'primary' : p.value === 'active' ? 'success' : 'default'}
+        />
+      ),
     },
     { field: 'effectiveFrom', headerName: 'From', width: 170, valueFormatter: fmtDate },
     { field: 'expiresAt', headerName: 'Expires', width: 170, valueFormatter: fmtDate },
@@ -323,20 +338,21 @@ export default function GroupDetailPage() {
       headerName: '',
       width: 170,
       sortable: false,
-      renderCell: (p) =>
+      renderCell: ({ row }) =>
         canManage &&
-        OPEN.has(p.row.status) && (
+        row.kind === 'membership' &&
+        OPEN.has(row.status) && (
           <Stack direction="row" spacing={1}>
             <Button
               size="small"
               onClick={() => {
-                setEditing(p.row);
-                setEditWindow({ effectiveFrom: p.row.effectiveFrom, expiresAt: p.row.expiresAt });
+                setEditing(row);
+                setEditWindow({ effectiveFrom: row.effectiveFrom, expiresAt: row.expiresAt });
               }}
             >
               Dates
             </Button>
-            <Button size="small" color="error" onClick={() => revokeMut.mutate(p.row.id)}>
+            <Button size="small" color="error" onClick={() => revokeMut.mutate(row.id)}>
               Remove
             </Button>
           </Stack>
@@ -410,6 +426,10 @@ export default function GroupDetailPage() {
 
   if (group.isError) return <Alert severity="error">Group not found</Alert>;
   const detail = group.data;
+  const memberRows: MemberRow[] = [
+    ...(detail?.managers ?? []).map((userId) => ({ kind: 'manager' as const, id: `manager:${userId}`, userId })),
+    ...(members.data ?? []).map((m) => ({ ...m, kind: 'membership' as const })),
+  ];
   const shownGrants = (grants.data ?? []).filter((g) => showEnded || OPEN.has(g.status));
   const editError = windowError(editWindow);
   const addError = windowError(memberWindow);
@@ -482,12 +502,12 @@ export default function GroupDetailPage() {
               </Stack>
             </Stack>
             <Typography variant="caption" color="text.secondary">
-              The group's managers have member access too, without being listed here.
+              Managers are listed with the <em>manager</em> tag and have member access; change them via Edit.
             </Typography>
             <Divider sx={{ mb: 1 }} />
             <div style={{ height: 400, width: '100%' }}>
               <DataGrid
-                rows={members.data ?? []}
+                rows={memberRows}
                 columns={memberColumns}
                 getRowId={(r) => r.id}
                 loading={members.isLoading}

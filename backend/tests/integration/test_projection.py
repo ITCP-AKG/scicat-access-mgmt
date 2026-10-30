@@ -115,3 +115,34 @@ async def test_deactivation_ends_manager_access(client, admin_headers, ctx):
     assert "team" not in await _identity_groups(ctx, "user-id")
     group = await ctx.app_db.groups.find_one({"name": "team"})
     assert group["managers"] == []
+
+
+async def _reactivations(ctx, user_id):
+    return await ctx.app_db.audit_log.count_documents(
+        {"action": "user.reactivate", "entityId": user_id}
+    )
+
+
+async def test_departed_user_made_manager_is_reactivated(client, admin_headers, ctx):
+    resp = await client.post("/api/v1/users/user-id/deactivate", headers=admin_headers)
+    assert resp.status_code == 202, resp.text
+    assert await ctx.app_db.departed_users.find_one({"_id": "user-id"})
+
+    await _managed_team(client, admin_headers)
+    assert not await ctx.app_db.departed_users.find_one({"_id": "user-id"})
+    assert await _reactivations(ctx, "user-id") == 1
+    assert "team" in await _identity_groups(ctx, "user-id")
+
+
+async def test_departed_user_added_as_manager_is_reactivated(client, admin_headers, ctx):
+    await _managed_team(client, admin_headers, managers=())
+    resp = await client.post("/api/v1/users/user-id/deactivate", headers=admin_headers)
+    assert resp.status_code == 202, resp.text
+
+    resp = await client.patch(
+        "/api/v1/groups/team", headers=admin_headers, json={"managers": ["user-id"]}
+    )
+    assert resp.status_code == 200, resp.text
+    assert not await ctx.app_db.departed_users.find_one({"_id": "user-id"})
+    assert await _reactivations(ctx, "user-id") == 1
+    assert "team" in await _identity_groups(ctx, "user-id")
