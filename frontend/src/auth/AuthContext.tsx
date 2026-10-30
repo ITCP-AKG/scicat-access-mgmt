@@ -1,11 +1,12 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
+  ApiError,
+  CATORGA_SESSION_KEY,
   clearToken,
   getToken,
   scicatLogin,
   setToken,
   setUnauthorizedHandler,
-  type LoginMethod,
 } from '../api/client';
 import { UsersApi } from '../api/endpoints';
 import type { Me } from '../api/types';
@@ -13,7 +14,7 @@ import type { Me } from '../api/types';
 interface AuthState {
   me: Me | null;
   loading: boolean;
-  login: (username: string, password: string, method?: LoginMethod) => Promise<void>;
+  login: (username: string, password: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -22,32 +23,50 @@ const AuthContext = createContext<AuthState | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
+  const inflight = useRef<Promise<void> | null>(null);
 
-  async function refresh() {
-    if (!getToken()) {
-      setMe(null);
+  // The client drops a token SciCat rejects (401), so on a 401 try the next one: our own
+  // login first, then the catorga session. Any other failure (e.g. SciCat down, 503)
+  // keeps the token for the next attempt.
+  function refresh(): Promise<void> {
+    inflight.current ??= (async () => {
+      let next: Me | null = null;
+      for (let attempt = 0; attempt < 2 && getToken(); attempt++) {
+        try {
+          next = await UsersApi.me();
+          break;
+        } catch (e) {
+          if (!(e instanceof ApiError && e.status === 401)) break;
+        }
+      }
+      setMe(next);
       setLoading(false);
-      return;
-    }
-    try {
-      setMe(await UsersApi.me());
-    } catch {
-      clearToken();
-      setMe(null);
-    } finally {
-      setLoading(false);
-    }
+    })().finally(() => {
+      inflight.current = null;
+    });
+    return inflight.current;
   }
 
   useEffect(() => {
     void refresh();
-    // Any 401 from the backend ends the session and returns to the login page.
-    setUnauthorizedHandler(() => setMe(null));
-    return () => setUnauthorizedHandler(null);
+    // A 401 from the backend ends that session; fall back to another one, or the login page.
+    setUnauthorizedHandler(() => {
+      setLoading(true);
+      void refresh();
+    });
+    // Follow catorga sign-ins and sign-outs made in other tabs of the same origin.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === CATORGA_SESSION_KEY || e.key === null) void refresh();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      setUnauthorizedHandler(null);
+      window.removeEventListener('storage', onStorage);
+    };
   }, []);
 
-  async function login(username: string, password: string, method: LoginMethod = 'local') {
-    const token = await scicatLogin(username, password, method);
+  async function login(username: string, password: string) {
+    const token = await scicatLogin(username, password);
     setToken(token);
     setLoading(true);
     await refresh();

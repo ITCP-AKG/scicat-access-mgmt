@@ -7,18 +7,14 @@ import {
   CardContent,
   Stack,
   TextField,
-  ToggleButton,
-  ToggleButtonGroup,
   Typography,
 } from '@mui/material';
-import type { LoginMethod } from '../api/client';
 import { useAuth } from './AuthContext';
 
 export default function LoginPage() {
   const { login } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [method, setMethod] = useState<LoginMethod>('local');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -27,7 +23,7 @@ export default function LoginPage() {
     setError(null);
     setBusy(true);
     try {
-      await login(username, password, method);
+      await login(username, password);
     } catch {
       setError('Login failed. Check your SciCat credentials.');
     } finally {
@@ -43,20 +39,11 @@ export default function LoginPage() {
             SciCat Access Management
           </Typography>
           <Typography variant="body2" color="text.secondary" gutterBottom>
-            Sign in with your university account, or a SciCat functional account. If you
-            are signed in to catorga in this browser, that session is used automatically.
+            University (KIT) users: sign in to catorga in this browser; that session is used
+            here automatically. The form below is for SciCat functional accounts only.
           </Typography>
           <form onSubmit={onSubmit}>
             <Stack spacing={2} mt={2}>
-              <ToggleButtonGroup
-                exclusive
-                size="small"
-                value={method}
-                onChange={(_, v: LoginMethod | null) => v && setMethod(v)}
-              >
-                <ToggleButton value="ldap">University (LDAP)</ToggleButton>
-                <ToggleButton value="local">SciCat account</ToggleButton>
-              </ToggleButtonGroup>
               {error && <Alert severity="error">{error}</Alert>}
               <TextField
                 label="Username"
