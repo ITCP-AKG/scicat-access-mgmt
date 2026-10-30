@@ -22,10 +22,11 @@ import {
 import { DataGrid, type GridColDef } from '@mui/x-data-grid';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
-import { GrantsApi, GroupsApi, MembersApi, ProjectionApi } from '../api/endpoints';
+import { GrantsApi, GroupsApi, InvitesApi, MembersApi, ProjectionApi } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import UserPicker, { UserMultiPicker } from '../components/UserPicker';
+import InviteDialog from '../components/InviteDialog';
 import TemporalWindowField from '../components/TemporalWindowField';
 import { CATEGORIES, EMPTY_WINDOW, windowError, type TemporalWindow } from '../lib/forms';
 import type {
@@ -33,6 +34,7 @@ import type {
   GroupCategory,
   GroupDetail,
   GroupStatus,
+  Invite,
   Membership,
   ResourceGrant,
 } from '../api/types';
@@ -190,7 +192,7 @@ export default function GroupDetailPage() {
   const qc = useQueryClient();
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<'add' | 'edit' | 'delete' | null>(null);
+  const [dialog, setDialog] = useState<'add' | 'edit' | 'delete' | 'invite' | null>(null);
   const [editing, setEditing] = useState<Membership | null>(null);
   const [showEnded, setShowEnded] = useState(false);
 
@@ -206,6 +208,11 @@ export default function GroupDetailPage() {
   const grants = useQuery({
     queryKey: ['grants', name],
     queryFn: () => GrantsApi.list({ groupName: name }),
+    enabled: canManage,
+  });
+  const invites = useQuery({
+    queryKey: ['invites', name],
+    queryFn: () => InvitesApi.list(name),
     enabled: canManage,
   });
 
@@ -272,6 +279,15 @@ export default function GroupDetailPage() {
     onError: (e) => setError(errorText(e, 'Failed to remove grant')),
   });
 
+  const revokeInviteMut = useMutation({
+    mutationFn: (id: string) => InvitesApi.revoke(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['invites', name] });
+      setToast('Invitation revoked');
+    },
+    onError: (e) => setError(errorText(e, 'Failed to revoke the invitation')),
+  });
+
   const projectMut = useMutation({
     mutationFn: () => ProjectionApi.run({ groupName: name }),
     onSuccess: (r) =>
@@ -324,7 +340,13 @@ export default function GroupDetailPage() {
 
   const grantColumns: GridColDef<ResourceGrant>[] = [
     { field: 'resourceType', headerName: 'Type', width: 120 },
-    { field: 'resourceId', headerName: 'Resource', flex: 1.3 },
+    {
+      field: 'resourceId',
+      headerName: 'Resource',
+      flex: 1.3,
+      valueGetter: (p) =>
+        p.row.resourceType === 'project' ? `${p.row.resourceId} (${p.row.childCount ?? 0} records)` : p.row.resourceId,
+    },
     { field: 'mode', headerName: 'Mode', width: 90 },
     {
       field: 'status',
@@ -351,6 +373,30 @@ export default function GroupDetailPage() {
         (p.row.mode === 'access' ? canManage : isAdmin) && (
           <Button size="small" color="error" onClick={() => removeGrantMut.mutate(p.row.id)}>
             {p.row.pendingRemoval ? 'Retry' : 'Remove'}
+          </Button>
+        ),
+    },
+  ];
+
+  const inviteColumns: GridColDef<Invite>[] = [
+    { field: 'email', headerName: 'E-mail', flex: 1 },
+    {
+      field: 'status',
+      headerName: 'Status',
+      width: 120,
+      renderCell: (p) => <Chip size="small" label={p.value} color={p.value === 'accepted' ? 'success' : 'default'} />,
+    },
+    { field: 'createdAt', headerName: 'Sent', width: 170, valueFormatter: fmtDate },
+    { field: 'expiresAt', headerName: 'Link expires', width: 170, valueFormatter: fmtDate },
+    {
+      field: 'actions',
+      headerName: '',
+      width: 110,
+      sortable: false,
+      renderCell: (p) =>
+        p.row.status === 'pending' && (
+          <Button size="small" color="error" onClick={() => revokeInviteMut.mutate(p.row.id)}>
+            Revoke
           </Button>
         ),
     },
@@ -412,14 +458,26 @@ export default function GroupDetailPage() {
           <Paper sx={{ p: 2, mb: 2 }}>
             <Stack direction="row" justifyContent="space-between" alignItems="center" mb={1}>
               <Typography variant="h6">Members</Typography>
-              <Button
-                variant="contained"
-                onClick={() => setDialog('add')}
-                disabled={detail?.status === 'retired'}
-              >
-                Add member
-              </Button>
+              <Stack direction="row" spacing={1}>
+                <Button
+                  variant="outlined"
+                  onClick={() => setDialog('invite')}
+                  disabled={detail?.status === 'retired'}
+                >
+                  Invite by e-mail
+                </Button>
+                <Button
+                  variant="contained"
+                  onClick={() => setDialog('add')}
+                  disabled={detail?.status === 'retired'}
+                >
+                  Add member
+                </Button>
+              </Stack>
             </Stack>
+            <Typography variant="caption" color="text.secondary">
+              The group's managers have member access too, without being listed here.
+            </Typography>
             <Divider sx={{ mb: 1 }} />
             <div style={{ height: 400, width: '100%' }}>
               <DataGrid
@@ -428,6 +486,23 @@ export default function GroupDetailPage() {
                 getRowId={(r) => r.id}
                 loading={members.isLoading}
                 disableRowSelectionOnClick
+              />
+            </div>
+          </Paper>
+
+          <Paper sx={{ p: 2, mb: 2 }}>
+            <Typography variant="h6" mb={1}>
+              Invitations
+            </Typography>
+            <Divider sx={{ mb: 1 }} />
+            <div style={{ height: 260, width: '100%' }}>
+              <DataGrid
+                rows={invites.data ?? []}
+                columns={inviteColumns}
+                getRowId={(r) => r.id}
+                loading={invites.isLoading}
+                disableRowSelectionOnClick
+                density="compact"
               />
             </div>
           </Paper>
@@ -501,6 +576,7 @@ export default function GroupDetailPage() {
         <EditGroupDialog group={detail} isAdmin={isAdmin} onClose={() => setDialog(null)} onSaved={setToast} />
       )}
       {dialog === 'delete' && detail && <DeleteGroupDialog group={detail} onClose={() => setDialog(null)} />}
+      {dialog === 'invite' && <InviteDialog groups={[name]} defaultGroup={name} onClose={() => setDialog(null)} />}
 
       <Snackbar open={!!toast} autoHideDuration={5000} onClose={() => setToast(null)} message={toast ?? ''} />
     </Box>

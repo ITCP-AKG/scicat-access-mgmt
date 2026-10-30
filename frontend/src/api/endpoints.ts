@@ -11,6 +11,9 @@ import type {
   Group,
   GroupCreate,
   GroupDetail,
+  Invite,
+  InviteCreate,
+  InviteCreated,
   Me,
   Membership,
   NameCheck,
@@ -46,6 +49,13 @@ export const MembersApi = {
   revoke: (id: string) => api.del<void>(`/api/v1/memberships/${id}`),
 };
 
+export const InvitesApi = {
+  create: (body: InviteCreate) => api.post<InviteCreated>('/api/v1/invites', body),
+  list: (groupName: string) =>
+    api.get<Invite[]>(`/api/v1/invites?groupName=${encodeURIComponent(groupName)}`),
+  revoke: (id: string) => api.del<Invite>(`/api/v1/invites/${encodeURIComponent(id)}`),
+};
+
 export const UsersApi = {
   me: () => api.get<Me>('/api/v1/me'),
   get: (userId: string) => api.get<DirectoryUser>(`/api/v1/users/${encodeURIComponent(userId)}`),
@@ -77,10 +87,12 @@ export const TransfersApi = {
 };
 
 export const GrantsApi = {
-  list: (params?: { groupName?: string; resourceType?: ResourceType }) => {
+  /** Top-level grants, or with parentGrantId the per-record children of a project grant. */
+  list: (params?: { groupName?: string; resourceType?: ResourceType; parentGrantId?: string }) => {
     const qs = new URLSearchParams();
     if (params?.groupName) qs.set('groupName', params.groupName);
     if (params?.resourceType) qs.set('resourceType', params.resourceType);
+    if (params?.parentGrantId) qs.set('parentGrantId', params.parentGrantId);
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
     return api.get<ResourceGrant[]>(`/api/v1/grants${suffix}`);
   },

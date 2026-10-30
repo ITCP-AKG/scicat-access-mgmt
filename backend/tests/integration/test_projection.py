@@ -63,3 +63,55 @@ async def test_explicit_run_and_reconcile_reports_drift(client, admin_headers, c
 async def test_projection_requires_admin(client, user_headers):
     resp = await client.post("/api/v1/projection/run", headers=user_headers, json={"all": True})
     assert resp.status_code == 403
+
+
+async def _managed_team(client, admin_headers, managers=("user-id",)):
+    resp = await client.post(
+        "/api/v1/groups",
+        headers=admin_headers,
+        json={"name": "team", "category": "research-group", "managers": list(managers)},
+    )
+    assert resp.status_code == 201, resp.text
+
+
+async def test_managers_get_member_access(client, admin_headers, ctx):
+    await _managed_team(client, admin_headers)
+    assert "team" in await _identity_groups(ctx, "user-id")
+
+    # adding a manager projects them, removing one withdraws it
+    await client.patch(
+        "/api/v1/groups/team", headers=admin_headers, json={"managers": ["bob-id"]}
+    )
+    assert "team" not in await _identity_groups(ctx, "user-id")
+    assert "team" in await _identity_groups(ctx, "bob-id")
+
+
+async def test_retiring_or_deleting_a_group_ends_manager_access(client, admin_headers, ctx):
+    await _managed_team(client, admin_headers)
+    await client.patch("/api/v1/groups/team", headers=admin_headers, json={"status": "retired"})
+    assert "team" not in await _identity_groups(ctx, "user-id")
+    await client.patch("/api/v1/groups/team", headers=admin_headers, json={"status": "active"})
+    assert "team" in await _identity_groups(ctx, "user-id")
+
+    resp = await client.delete("/api/v1/groups/team", headers=admin_headers)
+    assert resp.status_code == 204, resp.text
+    assert "team" not in await _identity_groups(ctx, "user-id")
+
+
+async def test_reconcile_restores_manager_access(client, admin_headers, ctx):
+    await _managed_team(client, admin_headers)
+    # a SciCat login rewrites accessGroups without app-managed groups
+    await ctx.scicat_db["UserIdentity"].update_one(
+        {"userId": "user-id"}, {"$set": {"profile.accessGroups": ["u.alice"]}}
+    )
+    await client.post("/api/v1/projection/reconcile", headers=admin_headers)
+    assert "team" in await _identity_groups(ctx, "user-id")
+
+
+async def test_deactivation_ends_manager_access(client, admin_headers, ctx):
+    await _managed_team(client, admin_headers)
+    resp = await client.post("/api/v1/users/user-id/deactivate", headers=admin_headers)
+    assert resp.status_code == 202, resp.text
+    assert "team" not in await _identity_groups(ctx, "user-id")
+    group = await ctx.app_db.groups.find_one({"name": "team"})
+    assert group["managers"] == []

@@ -91,9 +91,11 @@ async def test_transfer_owner_to_user_successor(client, admin_headers, ctx):
 
     resp = await client.post("/api/v1/users/user-id/deactivate", headers=admin_headers)
     rec = resp.json()["records"][0]
-    assert rec["outcome"] == "transferred"
+    # a person has no group to take the ownerGroup over: contacts move, the group is manual
+    assert rec["outcome"] == "pending_manual"
+    assert any("personal group" in n for n in rec["notes"])
     res = ctx.scicat.resources[("dataset", "ds-1")]
-    assert res["ownerGroup"] == "u.bob"
+    assert res["ownerGroup"] == "u.alice"
     assert res["owner"] == "bob"
     assert res["ownerEmail"] == "bob@catorga.dev"  # matched case-insensitively
     assert res["contactEmail"] == "pi@catorga.dev"  # names someone else: untouched

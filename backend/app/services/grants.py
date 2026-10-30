@@ -5,6 +5,12 @@ Applies/removes a group as `ownerGroup` (mode=owner) or member of `accessGroups`
 Bulk applies isolate per-item failures and report them individually (SC-006). Each grant
 is persisted in `resource_grants` and audited.
 
+A project grant (resourceType "project", access mode only) shares a catorga project: it is
+a parent row holding the window, and each of the project's records gets an ordinary child
+grant (`parentGrantId`). Records added to the project later are covered by `cascade`
+(scheduler, or `POST /projects/{id}/sync` right after catorga creates one). Ending the
+parent ends its children.
+
 Withdrawal semantics:
 - a grant only undoes what it did: if the group already owned / had access to the
   resource when the grant took effect (`preexisting`), withdrawal leaves it in place;
@@ -36,6 +42,7 @@ from ..models.resource_grant import (
 )
 from ..services.scicat_client import PAGE_SIZE, RESOURCE_MAP, ScicatError, resource_id
 from ..util import window_error
+from .projects import ProjectService
 
 logger = logging.getLogger(__name__)
 
@@ -116,15 +123,24 @@ class GrantService:
         return ResourceGrant(**doc)
 
     async def list(
-        self, group_name: str | None = None, resource_type: str | None = None
+        self,
+        group_name: str | None = None,
+        resource_type: str | None = None,
+        parent_grant_id: str | None = None,
     ) -> list[ResourceGrant]:
-        query: dict[str, Any] = {}
+        """Top-level grants, or the children of one project grant."""
+        query: dict[str, Any] = {"parentGrantId": parent_grant_id}
         if group_name:
             query["groupName"] = group_name
         if resource_type:
             query["resourceType"] = resource_type
         cursor = self.col.find(query, {"_id": 0}).sort("appliedAt", -1)
-        return [ResourceGrant(**doc) async for doc in cursor]
+        grants = [ResourceGrant(**doc) async for doc in cursor]
+        for i, grant in enumerate(grants):
+            if grant.resourceType == "project":
+                count = await self.col.count_documents({"parentGrantId": grant.id, "status": _OPEN})
+                grants[i] = grant.model_copy(update={"childCount": count})
+        return grants
 
     # ---- SciCat effects ----
 
@@ -216,7 +232,17 @@ class GrantService:
         audit_actor = "system" if system else actor
         actor_kind = "system" if audit_actor == "system" else "user"
         note = None
-        if grant.status == "active":
+        if grant.resourceType == "project":
+            # a child SciCat refuses stays effective (pendingRemoval) and is retried alone
+            children = [
+                ResourceGrant(**doc)
+                async for doc in self.col.find(
+                    {"parentGrantId": grant.id, "status": _OPEN}, {"_id": 0}
+                )
+            ]
+            for child in children:
+                await self._end(child, final_status, actor, system=system)
+        elif grant.status == "active":
             try:
                 note = await self._withdraw(grant)
             except ScicatError as exc:
@@ -264,8 +290,9 @@ class GrantService:
     ) -> BulkResult:
         """Apply a grant to each resource, isolating per-item failures.
 
-        `allowed_owner_groups` (non-admin callers): only resources whose current ownerGroup
-        is in this set may be granted; others fail individually as forbidden.
+        `allowed_owner_groups` (non-admin callers: the groups they manage): only resources
+        whose current ownerGroup is in this set may be granted; others fail individually as
+        forbidden. The owner side decides who a resource is shared with.
         """
         await self._require_group(payload.groupName)
         error = window_error(payload.effectiveFrom, payload.expiresAt, self.ctx.now())
@@ -273,9 +300,10 @@ class GrantService:
             raise InvalidWindowError(error)
         ids = list(dict.fromkeys(payload.resourceIds))
         result = BulkResult(total=len(ids))
+        apply_one = self._apply_project if payload.resourceType == "project" else self._apply_one
         for rid in ids:
             try:
-                grant = await self._apply_one(payload, rid, actor, allowed_owner_groups)
+                grant = await apply_one(payload, rid, actor, allowed_owner_groups)
                 result.succeeded += 1
                 result.items.append(BulkResultItem(resourceId=rid, ok=True, grantId=grant.id))
             except Exception as exc:  # noqa: BLE001 - isolate per-item failure
@@ -295,15 +323,17 @@ class GrantService:
         doc = await self.ctx.scicat.get_resource(payload.resourceType, rid)
         if allowed_owner_groups is not None and doc.get("ownerGroup") not in allowed_owner_groups:
             raise GrantForbiddenError(
-                f"forbidden: {payload.resourceType}/{rid} is not owned by one of your groups"
+                f"forbidden: {payload.resourceType}/{rid} is not owned by a group you manage"
             )
         now = self.ctx.now()
         status = compute_grant_status(payload.effectiveFrom, payload.expiresAt, now)
+        # (children of project grants live on their own: a project's sharing and a
+        # record's own sharing do not replace each other)
         open_grants = [
             ResourceGrant(**d)
             async for d in self.col.find(
                 {"resourceType": payload.resourceType, "resourceId": rid,
-                 "mode": payload.mode, "status": _OPEN},
+                 "mode": payload.mode, "status": _OPEN, "parentGrantId": None},
                 {"_id": 0},
             )
         ]
@@ -326,6 +356,7 @@ class GrantService:
             expiresAt=payload.expiresAt,
             status=status,
             appliedBy=actor,
+            resourceOwnerGroup=doc.get("ownerGroup") or None,
         )
         if status == "active":
             grant = grant.model_copy(update=await self._activate(grant, doc, inherited=applied))
@@ -337,7 +368,7 @@ class GrantService:
                     "it is pending removal and will be retried"
                 )
 
-        await self.col.insert_one(grant.model_dump())
+        await self.col.insert_one(grant.model_dump(exclude={"childCount"}))
         # the new grant replaces any open one for the same group/resource/mode
         await self.col.update_many(
             {"id": {"$in": [g.id for g in same]}, "status": _OPEN},
@@ -351,6 +382,126 @@ class GrantService:
             after=grant.model_dump(mode="json"),
         )
         return grant
+
+    async def _apply_project(
+        self,
+        payload: GrantApply,
+        proposal_id: str,
+        actor: str,
+        allowed_owner_groups: set[str] | None = None,
+    ) -> ResourceGrant:
+        proposal = await self.ctx.scicat.get_resource("proposal", proposal_id)
+        owner = proposal.get("ownerGroup") or ""
+        if allowed_owner_groups is not None and owner not in allowed_owner_groups:
+            raise GrantForbiddenError(
+                f"forbidden: project {proposal_id} is not owned by a group you manage"
+            )
+        # sharing again replaces the group's open grant on the project (and its window)
+        previous = [
+            ResourceGrant(**doc)
+            async for doc in self.col.find(
+                {"resourceType": "project", "resourceId": proposal_id,
+                 "groupName": payload.groupName, "status": _OPEN},
+                {"_id": 0},
+            )
+        ]
+        for grant in previous:
+            await self._end(grant, "removed", actor)
+        parent = ResourceGrant(
+            groupName=payload.groupName,
+            resourceType="project",
+            resourceId=proposal_id,
+            mode="access",
+            effectiveFrom=payload.effectiveFrom,
+            expiresAt=payload.expiresAt,
+            status=compute_grant_status(payload.effectiveFrom, payload.expiresAt, self.ctx.now()),
+            appliedBy=actor,
+            resourceOwnerGroup=owner or None,
+        )
+        await self.col.insert_one(parent.model_dump(exclude={"childCount"}))
+        await self.ctx.audit.record(
+            actor=actor, action="grant.apply", entity_type="grant", entity_id=parent.id,
+            summary=f"applied {_describe(parent)}"
+            + (" (scheduled)" if parent.status == "scheduled" else ""),
+            after=parent.model_dump(mode="json"),
+        )
+        if parent.status == "active":
+            await self.cascade(parent, actor)
+        return parent
+
+    async def cascade(self, parent: ResourceGrant, actor: str = "system") -> int:
+        """Extend an active project grant to the project's records that lack a child
+        grant; returns how many were added. A record SciCat refuses is tried again on the
+        next cascade."""
+        try:
+            proposal, records = await ProjectService(self.ctx).records(parent.resourceId)
+        except ScicatError as exc:
+            if exc.status == 404:  # the project is gone
+                await self._end(parent, "removed", actor, system=actor == "system")
+                return 0
+            raise
+        owner = proposal.get("ownerGroup") or None
+        covered = {
+            (d["resourceType"], d["resourceId"])
+            async for d in self.col.find(
+                {"parentGrantId": parent.id, "status": _OPEN},
+                {"resourceType": 1, "resourceId": 1, "_id": 0},
+            )
+        }
+        added = 0
+        for rec in records:
+            if (rec.resource_type, rec.resource_id) in covered:
+                continue
+            child = ResourceGrant(
+                groupName=parent.groupName,
+                resourceType=rec.resource_type,
+                resourceId=rec.resource_id,
+                mode="access",
+                appliedBy=parent.appliedBy,
+                resourceOwnerGroup=owner,
+                parentGrantId=parent.id,
+            )
+            try:
+                child = child.model_copy(update=await self._activate(child, rec.doc))
+            except ScicatError as exc:
+                logger.warning("could not extend %s to %s/%s: %s", parent.id,
+                               rec.resource_type, rec.resource_id, exc)
+                continue
+            await self.col.insert_one(child.model_dump(exclude={"childCount"}))
+            added += 1
+        if added:
+            await self.ctx.audit.record(
+                actor=actor, actor_kind="system" if actor == "system" else "user",
+                action="grant.cascade", entity_type="grant", entity_id=parent.id,
+                summary=f"extended {_describe(parent)} to {added} record(s)",
+            )
+        return added
+
+    async def cascade_project(self, proposal_id: str, actor: str = "system") -> int:
+        """Extend the project's active grants to its new records."""
+        parents = [
+            ResourceGrant(**doc)
+            async for doc in self.col.find(
+                {"resourceType": "project", "resourceId": proposal_id, "status": "active"},
+                {"_id": 0},
+            )
+        ]
+        return sum([await self.cascade(parent, actor) for parent in parents])
+
+    async def cascade_all(self, actor: str = "system") -> dict[str, Any]:
+        parents = [
+            ResourceGrant(**doc)
+            async for doc in self.col.find(
+                {"resourceType": "project", "status": "active"}, {"_id": 0}
+            )
+        ]
+        result: dict[str, Any] = {"projectGrants": len(parents), "recordsAdded": 0, "errors": []}
+        for parent in parents:
+            try:
+                result["recordsAdded"] += await self.cascade(parent, actor)
+            except ScicatError as exc:
+                result["errors"].append(f"{parent.id}: {exc}")
+        return result
 
     # ---- remove / temporal sweep ----
 
@@ -374,7 +525,7 @@ class GrantService:
         docs = [doc async for doc in self.col.find({"status": _OPEN}, {"_id": 0})]
         for doc in docs:
             grant = ResourceGrant(**doc)
-            if grant.resourceType not in RESOURCE_MAP:
+            if grant.resourceType != "project" and grant.resourceType not in RESOURCE_MAP:
                 continue
             if grant.pendingRemoval:
                 done = await self._end(
@@ -383,6 +534,8 @@ class GrantService:
                 )
                 counts["grantsRetried" if done else "grantsPendingRemoval"] += 1
                 continue
+            if grant.parentGrantId:
+                continue  # follows its project grant
             new_status = compute_grant_status(grant.effectiveFrom, grant.expiresAt, now)
             if new_status == grant.status:
                 continue
@@ -397,6 +550,17 @@ class GrantService:
         return counts
 
     async def _activate_scheduled(self, grant: ResourceGrant) -> bool:
+        if grant.resourceType == "project":
+            await self.col.update_one({"id": grant.id}, {"$set": {"status": "active"}})
+            await self.ctx.audit.record(
+                actor="system", actor_kind="system", action="grant.activate",
+                entity_type="grant", entity_id=grant.id, summary=f"activated {_describe(grant)}",
+            )
+            try:
+                await self.cascade(grant.model_copy(update={"status": "active"}))
+            except ScicatError as exc:  # the cascade job tries again
+                await self.col.update_one({"id": grant.id}, {"$set": {"lastError": str(exc)}})
+            return True
         try:
             doc = await self.ctx.scicat.get_resource(grant.resourceType, grant.resourceId)
             fields = await self._activate(grant, doc)
@@ -511,7 +675,9 @@ class GrantService:
         restrict_owner_groups: list[str] | None = None,
     ) -> ResourcePage:
         """One page of SciCat resources. `restrict_owner_groups` limits non-admin callers
-        to resources owned by their own groups."""
+        to resources owned by the groups they manage. Projects are browsed as proposals."""
+        if resource_type == "project":
+            resource_type = "proposal"
         where: dict[str, Any] = {}
         if owner_group:
             where["ownerGroup"] = owner_group

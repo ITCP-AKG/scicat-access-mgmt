@@ -3,9 +3,11 @@
 SciCat v4.3.1 grants proposal create/update only to the `admin` and `proposalingestor`
 groups, so group managers and owner-group members cannot write proposals directly. These
 routes check the catorga rules and forward the write as the service account:
-- create: admins, or managers of the requested ownerGroup;
-- update: admins, members of the proposal's ownerGroup (the username counts as a personal
-  group), or its managers; moving it to another ownerGroup needs manage rights there.
+- create: admins, or managers of the requested ownerGroup (an active group);
+- update: admins, members of the proposal's ownerGroup, or its managers; moving it to
+  another ownerGroup needs manage rights there (an active group), and moves the project's
+  records (samples, datasets, their blocks and attachments) along.
+A username is not a group: SciCat never puts it into currentGroups.
 `accessGroups` is never forwarded — sharing goes through grants.
 """
 
@@ -15,10 +17,18 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from ..auth.deps import can_manage_group, current_user, ensure_can_manage_group, get_ctx, is_admin
+from ..auth.deps import (
+    can_manage_group,
+    current_user,
+    ensure_active_group,
+    ensure_can_manage_group,
+    get_ctx,
+    is_admin,
+)
 from ..auth.jwt import CurrentUser
 from ..context import AppContext
 from ..models.proposal import ProposalCreate, ProposalUpdate
+from ..services.projects import ProjectService
 from ..services.scicat_client import ScicatError, ScicatUnavailable
 
 router = APIRouter(tags=["proposals"])
@@ -38,7 +48,7 @@ async def _can_edit(proposal: dict[str, Any], user: CurrentUser, ctx: AppContext
     owner_group = proposal.get("ownerGroup") or ""
     if is_admin(user, ctx):
         return True
-    if owner_group and (owner_group in user.currentGroups or owner_group == user.username):
+    if owner_group and owner_group in user.currentGroups:
         return True
     return bool(owner_group) and await can_manage_group(owner_group, user, ctx)
 
@@ -50,6 +60,7 @@ async def create_proposal(
     user: CurrentUser = Depends(current_user),
 ):
     await ensure_can_manage_group(payload.ownerGroup, user, ctx)
+    await ensure_active_group(payload.ownerGroup, user, ctx)
     body = payload.model_dump(exclude={"accessGroups"})
     try:
         created = await ctx.scicat.create_resource("proposal", body)
@@ -88,10 +99,15 @@ async def update_proposal(
     new_owner = body.get("ownerGroup")
     if new_owner and new_owner != existing.get("ownerGroup"):
         await ensure_can_manage_group(new_owner, user, ctx)
+        await ensure_active_group(new_owner, user, ctx)
     try:
         updated = await ctx.scicat.patch_resource("proposal", proposal_id, body)
     except ScicatError as exc:
         raise _scicat_http_error(exc) from exc
+    old_owner = existing.get("ownerGroup") or ""
+    if new_owner and old_owner and new_owner != old_owner:
+        # the records follow; what SciCat refuses is retried by the scheduler
+        await ProjectService(ctx).move(proposal_id, old_owner, new_owner, actor=user.userId)
     await ctx.audit.record(
         actor=user.userId,
         action="proposal.update",

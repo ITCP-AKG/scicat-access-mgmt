@@ -15,7 +15,9 @@ from pydantic import BaseModel, Field
 from ..util import new_id, utcnow
 
 # Only these SciCat v4.3.1 types carry ownerGroup/accessGroups (instruments and jobs do not).
-ResourceType = Literal["dataset", "origdatablock", "proposal", "sample"]
+# "project" is a catorga project: the proposal plus its linked records (services/projects.py);
+# a project grant is a parent whose children are ordinary grants on those records.
+ResourceType = Literal["dataset", "origdatablock", "proposal", "sample", "project"]
 GrantMode = Literal["owner", "access"]
 GrantStatus = Literal["active", "scheduled", "expired", "removed"]
 
@@ -59,6 +61,12 @@ class ResourceGrant(BaseModel):
     # the group already owned / had access to the resource before the grant took effect;
     # withdrawal then leaves it in place
     preexisting: bool = False
+    # the resource's ownerGroup when the grant was applied: its managers may withdraw it
+    resourceOwnerGroup: str | None = None
+    # a child of a project grant: its window and lifetime are the parent's
+    parentGrantId: str | None = None
+    # listing only: a project grant's open children
+    childCount: int | None = None
     appliedAt: datetime = Field(default_factory=utcnow)
     appliedBy: str = ""
     endedAt: datetime | None = None

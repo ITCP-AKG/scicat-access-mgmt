@@ -116,6 +116,9 @@ class GroupService:
                     await memberships.add(name, MembershipCreate(userId=uid), actor=actor)
             else:
                 await self.projection.project_users(holders, actor=actor)
+        if payload.managers:
+            # managers get member access
+            await self.projection.project_users(payload.managers, actor=actor)
         return group
 
     async def list(
@@ -146,7 +149,7 @@ class GroupService:
                 {"groupName": name, "status": _OPEN}
             ),
             grantCount=await app_db.resource_grants.count_documents(
-                {"groupName": name, "status": _OPEN}
+                {"groupName": name, "status": _OPEN, "parentGrantId": None}
             ),
             transferRuleCount=await app_db.transfer_rules.count_documents(self._rule_refs(name)),
         )
@@ -171,8 +174,36 @@ class GroupService:
         )
         if status_changed:
             # retired groups confer nothing; re-activation restores members' access
+            # (users_for_group covers the current managers)
             await self.projection.project_group(name, actor=actor)
+        if "managers" in changes:
+            # managers get member access: grant it to new ones, withdraw it from removed ones
+            changed = set(doc.get("managers") or []) ^ set(changes["managers"])
+            if changed:
+                await self.projection.project_users(changed, actor=actor)
         return Group(**updated)
+
+    async def drop_manager(self, user_id: str, username: str, actor: str) -> list[str]:
+        """Remove a user from every group's managers (departure); returns those groups.
+        The caller re-projects the user."""
+        ids = [i for i in (user_id, username) if i]
+        names = [
+            doc["name"]
+            async for doc in self.col.find({"managers": {"$in": ids}}, {"name": 1, "_id": 0})
+        ]
+        for name in names:
+            doc = await self.col.find_one({"name": name}, {"_id": 0})
+            managers = [m for m in doc.get("managers") or [] if m not in ids]
+            await self.col.update_one(
+                {"name": name},
+                {"$set": {"managers": managers, "modifiedBy": actor, "modifiedAt": self.ctx.now()}},
+            )
+            await self.ctx.audit.record(
+                actor=actor, action="group.update", entity_type="group", entity_id=name,
+                summary=f"removed departing manager {user_id} from {name}",
+                before={"managers": doc.get("managers") or []}, after={"managers": managers},
+            )
+        return names
 
     async def delete(self, name: str, actor: str, cascade: bool = False) -> None:
         doc = await self.col.find_one({"name": name}, {"_id": 0})
@@ -182,10 +213,11 @@ class GroupService:
         active_members = await app_db.memberships.count_documents(
             {"groupName": name, "status": _OPEN}
         )
+        # top-level grants: removing a project grant ends its children
         open_grants = [
             g["id"]
             async for g in app_db.resource_grants.find(
-                {"groupName": name, "status": _OPEN}, {"id": 1, "_id": 0}
+                {"groupName": name, "status": _OPEN, "parentGrantId": None}, {"id": 1, "_id": 0}
             )
         ]
         rule_refs = await app_db.transfer_rules.count_documents(self._rule_refs(name))
@@ -206,10 +238,11 @@ class GroupService:
             await app_db.transfer_rules.delete_many(self._rule_refs(name))
 
         # Re-project while the name is still registered (hence removable) so it leaves
-        # every identity, including holders the app never projected onto.
-        result = await self.projection.project_users(
-            await self.projection.users_for_group(name), actor=actor
-        )
+        # every identity, including holders the app never projected onto. Managers are
+        # collected first and then cleared, so they lose their member access too.
+        users = await self.projection.users_for_group(name)
+        await self.col.update_one({"name": name}, {"$set": {"managers": []}})
+        result = await self.projection.project_users(users, actor=actor)
         await self.col.delete_one({"name": name})
         await self.ctx.audit.record(
             actor=actor, action="group.delete", entity_type="group", entity_id=name,

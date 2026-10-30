@@ -12,6 +12,7 @@ from ..context import AppContext
 from ..models.directory import DirectoryUser, DisplayNameLookup
 from ..models.membership import Membership
 from ..models.transfer import TransferBatchResult
+from ..services.groups import GroupService
 from ..services.memberships import MembershipService
 from ..services.projection import ProjectionService
 from ..services.transfers import TransferService
@@ -123,18 +124,25 @@ async def deactivate_user(
     SciCat login itself is not blocked by this app; disable the account in the identity
     provider (AD/LDAP) for that.
     """
-    known = await ctx.directory.get(user_id) or await ctx.app_db.memberships.find_one(
+    directory_user = await ctx.directory.get(user_id)
+    known = directory_user or await ctx.app_db.memberships.find_one(
         {"userId": user_id}, {"_id": 1}
     )
     if not known:
         raise HTTPException(status_code=404, detail=f"user '{user_id}' not found")
+    # managers have member access: end that too (end_all_for_user re-projects)
+    managed = await GroupService(ctx).drop_manager(
+        user_id, directory_user.username if directory_user else "", actor=admin.userId
+    )
     groups = await MembershipService(ctx).end_all_for_user(user_id, actor=admin.userId)
     await ctx.app_db.departed_users.update_one(
         {"_id": user_id}, {"$set": {"departedAt": ctx.now(), "by": admin.userId}}, upsert=True
     )
     await ctx.audit.record(
         actor=admin.userId, action="user.deactivate", entity_type="user", entity_id=user_id,
-        summary=f"deactivated {user_id}" + (f"; ended {', '.join(groups)}" if groups else ""),
+        summary=f"deactivated {user_id}"
+        + (f"; ended {', '.join(groups)}" if groups else "")
+        + (f"; no longer manages {', '.join(managed)}" if managed else ""),
     )
     return await TransferService(ctx).transfer_for_user(
         user_id, reason="departure", actor=admin.userId, groups=groups

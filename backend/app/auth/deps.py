@@ -67,6 +67,16 @@ async def ensure_can_manage_group(group_name: str, user: CurrentUser, ctx: AppCo
         )
 
 
+async def ensure_active_group(group_name: str, user: CurrentUser, ctx: AppContext) -> None:
+    """Non-admins may only target registered, active groups: a retired or unknown group
+    confers no access, so data put there would be lost to everyone but admins."""
+    if is_admin(user, ctx):
+        return
+    group = await ctx.app_db.groups.find_one({"name": group_name}, {"status": 1})
+    if not group or group.get("status", "active") != "active":
+        raise HTTPException(status_code=422, detail=f"'{group_name}' is not an active group")
+
+
 async def require_admin(
     user: CurrentUser = Depends(current_user),
     ctx: AppContext = Depends(get_ctx),

@@ -4,10 +4,15 @@ When a user departs (manual deactivation, or expiry of their last membership), t
 resources *they personally* own are handed to a successor per the highest-priority
 matching TransferRule (FR-018–021, SC-004). A resource is the user's when
 
-- its ownerGroup is the user's personal group (`PERSONAL_GROUP_TEMPLATE`, e.g.
-  "u.{username}"; empty disables this), or
+- its ownerGroup is the user's legacy personal group (`PERSONAL_GROUP_TEMPLATE`, e.g.
+  "{username}"; empty disables this), or
 - a contact field names them (dataset ownerEmail/contactEmail, proposal email/pi_email —
   matched on email — or a sample's `owner` username).
+
+A personal group is not a SciCat group (SciCat never puts a username into currentGroups),
+so such resources are readable by admins only; catorga no longer creates them. A group
+successor takes them over; a user successor only receives the contact fields, and the
+ownerGroup is left for an admin to reassign (`pending_manual`).
 
 Data owned by shared/project groups stays with its group; only the matched fields of a
 resource are changed. Without a matching rule nothing is changed and the resource is
@@ -90,7 +95,7 @@ class InvalidTransferRuleError(TransferError):
 
 @dataclass
 class _Successor:
-    group: str | None = None  # new ownerGroup for personal-group resources
+    group: str | None = None  # new ownerGroup for personal-group resources (group rules)
     person: DirectoryUser | None = None  # receives contact fields (None: not handed over)
     error: str | None = None
 
@@ -100,6 +105,7 @@ class _Plan:
     changes: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
     error: str | None = None
+    manual: bool = False  # the changes are applied, but the resource still needs a human
 
 
 def _same_email(a: Any, b: str) -> bool:
@@ -251,9 +257,8 @@ class TransferService:
         person = await self.ctx.directory.get(rule.successor)
         if person is None:
             return _Successor(error=f"successor user '{rule.successor}' not found")
-        return _Successor(
-            group=self._personal_group(person), person=person if rule.transferOwner else None
-        )
+        # a person has no group of their own to take the ownerGroup over
+        return _Successor(person=person if rule.transferOwner else None)
 
     # ---- Enumeration + planning ----
 
@@ -295,7 +300,11 @@ class TransferService:
             if successor.group:
                 plan.changes["ownerGroup"] = successor.group
             else:
-                plan.notes.append("successor has no personal group; ownerGroup left unchanged")
+                plan.manual = True
+                plan.notes.append(
+                    "owned by the departing user's personal group; ownerGroup left unchanged "
+                    "(reassign it to a group by hand)"
+                )
             if successor.person and slots and slots[0] not in matched:
                 matched.insert(0, slots[0])  # the owner moves together with the group
         if matched:
@@ -424,7 +433,7 @@ class TransferService:
         elif plan.changes:
             try:
                 await self.ctx.scicat.patch_resource(resource_type, rid, plan.changes)
-                outcome = "transferred"
+                outcome = "pending_manual" if plan.manual else "transferred"
             except ScicatError as exc:
                 outcome, error = "failed", str(exc)
         record = TransferRecord(

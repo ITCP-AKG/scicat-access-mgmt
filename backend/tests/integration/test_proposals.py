@@ -1,6 +1,6 @@
 """Proposal create/update proxy: SciCat only lets `admin`/`proposalingestor` write proposals,
-so these routes decide who may — admins and managers of the ownerGroup create; members of
-the ownerGroup (or its managers) edit."""
+so these routes decide who may — admins and managers of the (active) ownerGroup create;
+members of the ownerGroup (or its managers) edit. A username is not a group."""
 
 import pytest
 
@@ -106,10 +106,30 @@ async def test_owner_group_member_edits(client, admin_headers, bob_headers, ctx)
     assert entries[0]["before"] == {"title": "old"} and entries[0]["after"] == {"title": "new"}
 
 
-async def test_personal_group_owner_edits(client, bob_headers, ctx):
+async def test_username_is_not_a_group(client, bob_headers, ctx):
+    # SciCat never puts a username into currentGroups: bob could not even read this
     ctx.scicat.seed_resource("proposal", "p-1", ownerGroup="bob", title="old")
     resp = await client.patch("/api/v1/proposals/p-1", headers=bob_headers, json={"title": "new"})
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 403
+    assert ctx.scicat.resources[("proposal", "p-1")]["title"] == "old"
+
+
+async def test_manager_has_member_access_to_what_they_create(
+    client, admin_headers, user_headers, ctx
+):
+    await _setup_team(client, admin_headers)
+    doc = await ctx.scicat_db["UserIdentity"].find_one({"userId": "user-id"})
+    assert "team" in doc["profile"]["accessGroups"]  # projected for the manager
+    me = await client.get("/api/v1/me", headers=user_headers)
+    assert "team" in me.json()["currentGroups"]
+
+
+async def test_retired_group_rejected(client, admin_headers, user_headers, ctx):
+    await _setup_team(client, admin_headers)
+    await client.patch("/api/v1/groups/team", headers=admin_headers, json={"status": "retired"})
+    resp = await client.post("/api/v1/proposals", headers=user_headers, json=_proposal())
+    assert resp.status_code == 422
+    assert ("proposal", "p-1") not in ctx.scicat.resources
 
 
 async def test_manager_edits_without_membership(client, admin_headers, user_headers, ctx):

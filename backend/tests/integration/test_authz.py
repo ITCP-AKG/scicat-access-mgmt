@@ -1,6 +1,7 @@
 """Authorization regressions: every mutating route is limited to admins or managers of the
-affected group, owner grants are admin-only, and managers only touch resources their own
-groups own (all SciCat calls run as the service account, so the app is the only guard)."""
+affected group, owner grants are admin-only, and managers share only resources owned by a
+group they manage (all SciCat calls run as the service account, so the app is the only
+guard)."""
 
 import pytest
 
@@ -64,17 +65,20 @@ async def test_owner_grant_is_admin_only(client, admin_headers, user_headers, ct
     assert ctx.scicat.resources[("dataset", "ds-1")]["ownerGroup"] == "u.alice"
 
 
-async def test_manager_access_grant_limited_to_own_resources(
+async def test_manager_shares_managed_groups_resources_with_any_group(
     client, admin_headers, user_headers, ctx
 ):
-    await _setup_team(client, admin_headers)
-    ctx.scicat.seed_resource("dataset", "mine", ownerGroup="u.alice", accessGroups=[])
+    await _setup_team(client, admin_headers)  # alice manages team, not partners
+    await client.post(
+        "/api/v1/groups", headers=admin_headers, json={"name": "partners", "category": "other"}
+    )
+    ctx.scicat.seed_resource("dataset", "mine", ownerGroup="team", accessGroups=[])
     ctx.scicat.seed_resource("dataset", "theirs", ownerGroup="u.bob", accessGroups=[])
     resp = await client.post(
         "/api/v1/grants",
         headers=user_headers,
         json={
-            "groupName": "team",
+            "groupName": "partners",
             "resourceType": "dataset",
             "resourceIds": ["mine", "theirs"],
             "mode": "access",
@@ -84,7 +88,39 @@ async def test_manager_access_grant_limited_to_own_resources(
     by_id = {i["resourceId"]: i for i in resp.json()["items"]}
     assert by_id["mine"]["ok"] is True
     assert by_id["theirs"]["ok"] is False and "forbidden" in by_id["theirs"]["error"]
+    assert ctx.scicat.resources[("dataset", "mine")]["accessGroups"] == ["partners"]
     assert ctx.scicat.resources[("dataset", "theirs")]["accessGroups"] == []
+
+
+async def test_owner_side_and_receiving_side_managers_may_withdraw(
+    client, admin_headers, user_headers, bob_headers, ctx
+):
+    await _setup_team(client, admin_headers)  # alice manages the owner group
+    await client.post(
+        "/api/v1/groups",
+        headers=admin_headers,
+        json={"name": "partners", "category": "other", "managers": ["bob-id"]},
+    )
+    ctx.scicat.seed_resource("dataset", "ds-1", ownerGroup="team", accessGroups=[])
+    ctx.scicat.seed_resource("dataset", "ds-2", ownerGroup="team", accessGroups=[])
+    resp = await client.post(
+        "/api/v1/grants",
+        headers=user_headers,
+        json={"groupName": "partners", "resourceType": "dataset", "resourceIds": ["ds-1", "ds-2"]},
+    )
+    ids = [i["grantId"] for i in resp.json()["items"]]
+    assert resp.json()["items"][0]["ok"] and resp.json()["items"][1]["ok"]
+    # the receiving group's manager may not share team's data, but may give it back
+    denied = await client.post(
+        "/api/v1/grants",
+        headers=bob_headers,
+        json={"groupName": "partners", "resourceType": "dataset", "resourceIds": ["ds-1"]},
+    )
+    assert denied.json()["items"][0]["ok"] is False
+    assert (await client.delete(f"/api/v1/grants/{ids[0]}", headers=bob_headers)).status_code == 204
+    assert (await client.delete(f"/api/v1/grants/{ids[1]}", headers=user_headers)).status_code == 204
+    assert ctx.scicat.resources[("dataset", "ds-1")]["accessGroups"] == []
+    assert ctx.scicat.resources[("dataset", "ds-2")]["accessGroups"] == []
 
 
 async def test_grant_removal_requires_group_manager(
@@ -102,16 +138,17 @@ async def test_grant_removal_requires_group_manager(
     assert "team" in ctx.scicat.resources[("dataset", "ds-1")]["accessGroups"]
 
 
-async def test_browse_restricted_to_own_groups_for_managers(
+async def test_browse_restricted_to_managed_groups_for_managers(
     client, admin_headers, user_headers, ctx
 ):
     await _setup_team(client, admin_headers)
-    ctx.scicat.seed_resource("dataset", "mine", datasetName="Mine", ownerGroup="u.alice")
+    ctx.scicat.seed_resource("dataset", "mine", datasetName="Mine", ownerGroup="team")
+    ctx.scicat.seed_resource("dataset", "member", datasetName="Member", ownerGroup="u.alice")
     ctx.scicat.seed_resource("dataset", "theirs", datasetName="Theirs", ownerGroup="u.bob")
     resp = await client.get("/api/v1/resources/dataset", headers=user_headers)
     assert [i["id"] for i in resp.json()["items"]] == ["mine"]
     admin = await client.get("/api/v1/resources/dataset", headers=admin_headers)
-    assert {i["id"] for i in admin.json()["items"]} == {"mine", "theirs"}
+    assert {i["id"] for i in admin.json()["items"]} == {"mine", "member", "theirs"}
 
 
 async def test_plain_users_cannot_read_directory_or_admin_views(client, bob_headers):

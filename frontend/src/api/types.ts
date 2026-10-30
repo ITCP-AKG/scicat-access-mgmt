@@ -71,6 +71,38 @@ export interface Me {
   managerOf: string[];
 }
 
+export type InviteStatus = 'pending' | 'accepted' | 'revoked' | 'expired';
+
+/** A personal group invitation: single-use, bound to `email`, expiring, revocable. */
+export interface Invite {
+  id: string;
+  groupName: string;
+  email: string;
+  createdBy: string;
+  createdAt: string;
+  expiresAt: string;
+  membershipExpiresAt: string | null;
+  status: InviteStatus;
+  acceptedBy: string | null;
+  acceptedAt: string | null;
+  revokedBy: string | null;
+  revokedAt: string | null;
+}
+
+export interface InviteCreate {
+  groupName: string;
+  email: string;
+  validDays?: number;
+  membershipExpiresAt?: string | null;
+}
+
+/** Returned once: the token is not stored, so the link cannot be shown again. */
+export interface InviteCreated extends Invite {
+  token: string;
+  /** Empty when the server has no INVITE_LINK_BASE configured. */
+  link: string;
+}
+
 export interface GrantDriftItem {
   grantId: string;
   groupName: string;
@@ -90,7 +122,8 @@ export interface SyncResult {
 }
 
 // Only these SciCat v4.3.1 types carry ownerGroup/accessGroups (no instruments/jobs).
-export type ResourceType = 'dataset' | 'origdatablock' | 'proposal' | 'sample';
+// 'project' is a catorga project: the proposal plus its samples, datasets and blocks.
+export type ResourceType = 'project' | 'dataset' | 'origdatablock' | 'proposal' | 'sample';
 export type GrantMode = 'owner' | 'access';
 export type GrantStatus = 'active' | 'scheduled' | 'expired' | 'removed';
 
@@ -112,6 +145,12 @@ export interface ResourceGrant {
   /** SciCat refused the withdrawal: still effective, retried by the scheduler. */
   pendingRemoval: boolean;
   lastError: string | null;
+  /** The resource's ownerGroup when shared: its managers may withdraw the grant. */
+  resourceOwnerGroup: string | null;
+  /** Set on the per-record children of a project grant. */
+  parentGrantId: string | null;
+  /** Project grants in a listing: their open per-record children. */
+  childCount: number | null;
 }
 
 export interface BulkResultItem {

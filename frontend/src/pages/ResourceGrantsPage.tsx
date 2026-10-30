@@ -28,8 +28,10 @@ import TemporalWindowField from '../components/TemporalWindowField';
 import { EMPTY_WINDOW, windowError, type TemporalWindow } from '../lib/forms';
 import type { BulkResult, GrantMode, ResourceGrant, ResourceSummary, ResourceType } from '../api/types';
 
-// Only these SciCat types carry ownerGroup/accessGroups.
-const RESOURCE_TYPES: ResourceType[] = ['dataset', 'origdatablock', 'proposal', 'sample'];
+// Only these SciCat types carry ownerGroup/accessGroups. A project is shared whole: the
+// proposal and its samples, datasets and blocks, also those added later.
+const RESOURCE_TYPES: ResourceType[] = ['project', 'dataset', 'origdatablock', 'proposal', 'sample'];
+const TYPE_LABELS: Partial<Record<ResourceType, string>> = { project: 'project (with its records)' };
 const PAGE_SIZE = 50;
 const OPEN = new Set(['active', 'scheduled']);
 const fmtDate = (v: { value: string | null }) => (v.value ? new Date(v.value).toLocaleString() : '—');
@@ -38,7 +40,7 @@ function BrowseAndApply() {
   const { me } = useAuth();
   const isAdmin = !!me?.isAdmin;
   const qc = useQueryClient();
-  const [resourceType, setResourceType] = useState<ResourceType>('dataset');
+  const [resourceType, setResourceType] = useState<ResourceType>('project');
   const [search, setSearch] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
   const [page, setPage] = useState(0);
@@ -65,10 +67,9 @@ function BrowseAndApply() {
   });
 
   const { data: groups = [] } = useQuery({ queryKey: ['groups'], queryFn: () => GroupsApi.list() });
-  // Non-admins may only grant their own (active) groups.
-  const grantable = groups.filter(
-    (g) => g.status === 'active' && (isAdmin || me?.managerOf.includes(g.name)),
-  );
+  // The owner side decides: what you may share (resources of the groups you manage) can go
+  // to any active group.
+  const grantable = groups.filter((g) => g.status === 'active');
 
   function resetPaging() {
     setPage(0);
@@ -117,7 +118,7 @@ function BrowseAndApply() {
     <Box>
       {!isAdmin && (
         <Alert severity="info" sx={{ mb: 2 }}>
-          You see resources owned by your own groups and can grant access to the groups you manage.
+          You see resources owned by the groups you manage and can share them with any active group.
         </Alert>
       )}
       <Stack direction="row" spacing={2} mb={2} alignItems="center">
@@ -127,15 +128,17 @@ function BrowseAndApply() {
           label="Resource type"
           value={resourceType}
           onChange={(e) => {
-            setResourceType(e.target.value as ResourceType);
+            const next = e.target.value as ResourceType;
+            setResourceType(next);
+            if (next === 'project') setMode('access');
             setSelection([]);
             resetPaging();
           }}
-          sx={{ width: 180 }}
+          sx={{ width: 220 }}
         >
           {RESOURCE_TYPES.map((t) => (
             <MenuItem key={t} value={t}>
-              {t}
+              {TYPE_LABELS[t] ?? t}
             </MenuItem>
           ))}
         </TextField>
@@ -218,7 +221,11 @@ function BrowseAndApply() {
       </Stack>
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} fullWidth maxWidth="sm">
-        <DialogTitle>Apply group to {selection.length} resource(s)</DialogTitle>
+        <DialogTitle>
+          {resourceType === 'project'
+            ? `Share ${selection.length} project(s) with their records`
+            : `Apply group to ${selection.length} resource(s)`}
+        </DialogTitle>
         <DialogContent>
           <Stack spacing={2} mt={1}>
             {error && <Alert severity="error">{error}</Alert>}
@@ -241,7 +248,7 @@ function BrowseAndApply() {
               }
             >
               <MenuItem value="access">access</MenuItem>
-              {isAdmin && <MenuItem value="owner">owner</MenuItem>}
+              {isAdmin && resourceType !== 'project' && <MenuItem value="owner">owner</MenuItem>}
             </TextField>
             <Typography variant="caption" color="text.secondary">
               Optional time-bounded grant (activated/withdrawn by the scheduler):
@@ -289,8 +296,14 @@ function AppliedGrants() {
     onError: (e) => setMessage({ severity: 'error', text: e instanceof ApiError ? e.message : 'Failed to remove' }),
   });
 
+  const [recordsOf, setRecordsOf] = useState<ResourceGrant | null>(null);
+  // The receiving group's managers, and those of the resource's owner group, may withdraw.
   const canRemove = (g: ResourceGrant) =>
-    OPEN.has(g.status) && (isAdmin || (g.mode === 'access' && !!me?.managerOf.includes(g.groupName)));
+    OPEN.has(g.status) &&
+    (isAdmin ||
+      (g.mode === 'access' &&
+        (!!me?.managerOf.includes(g.groupName) ||
+          (!!g.resourceOwnerGroup && !!me?.managerOf.includes(g.resourceOwnerGroup)))));
 
   const rows = grants.filter(
     (g) => (showEnded || OPEN.has(g.status)) && (!groupFilter || g.groupName.includes(groupFilter)),
@@ -302,18 +315,22 @@ function AppliedGrants() {
     { field: 'resourceId', headerName: 'Resource', flex: 1.4 },
     { field: 'mode', headerName: 'Mode', width: 90 },
     {
+      field: 'childCount',
+      headerName: 'Records',
+      width: 100,
+      sortable: false,
+      renderCell: (p) =>
+        p.row.resourceType === 'project' && (
+          <Button size="small" onClick={() => setRecordsOf(p.row)}>
+            {p.row.childCount ?? 0}
+          </Button>
+        ),
+    },
+    {
       field: 'status',
       headerName: 'Status',
       width: 150,
-      renderCell: (p) => (
-        <Tooltip title={p.row.lastError ?? ''}>
-          <Chip
-            size="small"
-            label={p.row.pendingRemoval ? 'removal pending' : p.value}
-            color={p.row.pendingRemoval || p.row.lastError ? 'warning' : p.value === 'active' ? 'success' : 'default'}
-          />
-        </Tooltip>
-      ),
+      renderCell: (p) => <StatusChip grant={p.row} />,
     },
     { field: 'expiresAt', headerName: 'Expires', width: 170, valueFormatter: fmtDate },
     {
@@ -347,7 +364,64 @@ function AppliedGrants() {
       <div style={{ height: 560, width: '100%' }}>
         <DataGrid rows={rows} columns={columns} getRowId={(r) => r.id} loading={isLoading} disableRowSelectionOnClick density="compact" />
       </div>
+      {recordsOf && <ProjectRecordsDialog grant={recordsOf} onClose={() => setRecordsOf(null)} />}
     </Box>
+  );
+}
+
+function StatusChip({ grant }: { grant: ResourceGrant }) {
+  return (
+    <Tooltip title={grant.lastError ?? ''}>
+      <Chip
+        size="small"
+        label={grant.pendingRemoval ? 'removal pending' : grant.status}
+        color={
+          grant.pendingRemoval || grant.lastError ? 'warning' : grant.status === 'active' ? 'success' : 'default'
+        }
+      />
+    </Tooltip>
+  );
+}
+
+// The per-record grants of a project grant (records added to the project later are
+// covered by the scheduler, or at once when catorga creates them).
+function ProjectRecordsDialog({ grant, onClose }: { grant: ResourceGrant; onClose: () => void }) {
+  const { data: children = [], isLoading } = useQuery({
+    queryKey: ['grants', 'children', grant.id],
+    queryFn: () => GrantsApi.list({ parentGrantId: grant.id }),
+  });
+  const columns: GridColDef<ResourceGrant>[] = [
+    { field: 'resourceType', headerName: 'Type', width: 130 },
+    { field: 'resourceId', headerName: 'Record', flex: 1 },
+    { field: 'status', headerName: 'Status', width: 150, renderCell: (p) => <StatusChip grant={p.row} /> },
+    {
+      field: 'preexisting',
+      headerName: 'Had access before',
+      width: 150,
+      valueFormatter: (v) => (v.value ? 'yes (kept on removal)' : ''),
+    },
+  ];
+  return (
+    <Dialog open onClose={onClose} fullWidth maxWidth="md">
+      <DialogTitle>
+        Project {grant.resourceId} shared with {grant.groupName}
+      </DialogTitle>
+      <DialogContent>
+        <div style={{ height: 420, width: '100%' }}>
+          <DataGrid
+            rows={children}
+            columns={columns}
+            getRowId={(r) => r.id}
+            loading={isLoading}
+            disableRowSelectionOnClick
+            density="compact"
+          />
+        </div>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Close</Button>
+      </DialogActions>
+    </Dialog>
   );
 }
 

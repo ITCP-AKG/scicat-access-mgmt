@@ -1,8 +1,8 @@
 """Projection engine (T028).
 
 Computes each user's effective access groups — the union of their currently-active
-memberships in *active* (not retired) groups — and writes them into SciCat's
-UserIdentity.profile.accessGroups.
+memberships in *active* (not retired) groups and the active groups they manage (managers
+get member access) — and writes them into SciCat's UserIdentity.profile.accessGroups.
 
 Ownership invariant: the app only removes names it manages, i.e. every group in the
 registry (any status) plus whatever it last projected onto that user
@@ -97,9 +97,16 @@ class ProjectionService:
     async def _find_identity(self, user_id: str) -> dict[str, Any] | None:
         return await self.identities.find_one(identity_filter(user_id))
 
-    async def _active_groups_for_user(self, user_id: str, registry: Registry) -> set[str]:
+    async def _effective_groups(self, user_id: str, username: str, registry: Registry) -> set[str]:
+        """Active groups the user is a current member or a manager of."""
         now = self.ctx.now()
         active: set[str] = set()
+        ids = [i for i in (user_id, username) if i]
+        async for doc in self.ctx.app_db.groups.find(
+            {"managers": {"$in": ids}}, {"name": 1, "_id": 0}
+        ):
+            if doc["name"] in registry.active:
+                active.add(doc["name"])
         cursor = self.ctx.app_db.memberships.find({"userId": user_id}, {"_id": 0})
         async for doc in cursor:
             if doc["groupName"] not in registry.active:
@@ -139,9 +146,10 @@ class ProjectionService:
         doc = await self._find_identity(user_id)
         if not doc:
             return None
-        raw = (doc.get("profile") or {}).get("accessGroups")
+        profile = doc.get("profile") or {}
+        raw = profile.get("accessGroups")
         current = list(raw or [])
-        active = await self._active_groups_for_user(user_id, registry)
+        active = await self._effective_groups(user_id, profile.get("username", ""), registry)
         removable = registry.names | await self._last_projected(user_id)
         target = self.compute_target(current, removable, active)
         return UserPlan(
@@ -216,14 +224,16 @@ class ProjectionService:
         return sorted({identity_user_id(doc) async for doc in cursor})
 
     async def users_for_group(self, group_name: str) -> set[str]:
-        """Everyone whose projection may involve this group: members in any state, users it
-        was last projected onto, and current holders of the string."""
+        """Everyone whose projection may involve this group: members in any state, its
+        managers, users it was last projected onto, and current holders of the string."""
         users = {
             doc["userId"]
             async for doc in self.ctx.app_db.memberships.find(
                 {"groupName": group_name}, {"userId": 1, "_id": 0}
             )
         }
+        group = await self.ctx.app_db.groups.find_one({"name": group_name}, {"managers": 1})
+        users |= set((group or {}).get("managers") or [])
         users |= {
             doc["_id"] async for doc in self.state.find({"lastProjected": group_name}, {"_id": 1})
         }
@@ -231,13 +241,15 @@ class ProjectionService:
         return users
 
     async def managed_user_ids(self, registry: Registry | None = None) -> set[str]:
-        """Every user the app may need to correct: anyone with memberships, anyone it has
-        projected onto, and any identity carrying a registered group name."""
+        """Every user the app may need to correct: anyone with memberships, any manager,
+        anyone it has projected onto, and any identity carrying a registered group name."""
         registry = registry or await self.registry()
         users = {
             doc["userId"]
             async for doc in self.ctx.app_db.memberships.find({}, {"userId": 1, "_id": 0})
         }
+        async for doc in self.ctx.app_db.groups.find({}, {"managers": 1, "_id": 0}):
+            users |= set(doc.get("managers") or [])
         users |= {doc["_id"] async for doc in self.state.find({}, {"_id": 1})}
         if registry.names:
             cursor = self.identities.find(

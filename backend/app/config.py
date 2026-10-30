@@ -47,9 +47,17 @@ class Settings(BaseSettings):
     admin_groups: list[str] = ["admin"]
 
     # --- Ownership transfer ---
-    # Template of a user's personal ownerGroup, e.g. "u.{username}". Empty disables
-    # ownerGroup reassignment of personal resources (contact fields are still handed over).
+    # Template of a user's legacy personal ownerGroup, e.g. "{username}" (older catorga
+    # records). Only used to recognise such resources on departure so a group successor
+    # can take them over; it is not projected (SciCat never treats a username as a group).
     personal_group_template: str = ""
+
+    # --- Invitations ---
+    # The invitation link is this base + the token, e.g. "https://host/#/invite/" (catorga's
+    # invite page). Empty: the API returns only the token.
+    invite_link_base: str = ""
+    invite_default_days: int = 14
+    invite_max_days: int = 90
 
     # --- Reserved groups ---
     reserved_groups: list[str] = DEFAULT_RESERVED_GROUPS
@@ -60,6 +68,9 @@ class Settings(BaseSettings):
     # SciCat rewrites profile.accessGroups on every login; re-project changed identities.
     login_watch_seconds: int = 15
     expiry_warning_days: int = 30
+    # Extend project grants to records added to a project since (also done on demand by
+    # POST /projects/{id}/sync), and retry partly refused project moves.
+    project_cascade_seconds: int = 300
 
     # --- Misc ---
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:80"]

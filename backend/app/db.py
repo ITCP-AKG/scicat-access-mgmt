@@ -43,6 +43,10 @@ class Database:
             partialFilterExpression={"status": {"$in": ["active", "scheduled"]}},
         )
         await self.app.resource_grants.create_index([("groupName", 1), ("resourceType", 1)])
+        await self.app.resource_grants.create_index("parentGrantId")
+        await self.app.project_moves.create_index("status")
+        await self.app.invites.create_index("tokenHash", unique=True)
+        await self.app.invites.create_index("groupName")
         await self.app.transfer_records.create_index(
             [("batchId", 1), ("resourceType", 1), ("resourceId", 1)], unique=True
         )

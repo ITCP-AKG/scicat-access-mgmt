@@ -1,9 +1,11 @@
-"""Background scheduler: expiry sweep, login watcher and periodic reconcile (T039).
+"""Background scheduler: expiry sweep, login watcher, project cascade and periodic
+reconcile (T039).
 
 The sweep materialises membership/grant temporal transitions and re-projects; the login
 watcher re-projects users whose SciCat identity was just rewritten by a login (SciCat
 replaces profile.accessGroups on every login); the reconcile job repairs any remaining
-drift between app state and SciCat. All run under a Mongo lease
+drift between app state and SciCat; the project cascade extends project grants to records
+added to a project and retries partly refused project moves. All run under a Mongo lease
 (`sync_state._id == 'scheduler-lease'`) so only one app instance acts at a time (R6), and
 all are attributed to the `system` actor in the audit log.
 """
@@ -18,6 +20,7 @@ from ..context import AppContext
 from ..services.grants import GrantService
 from ..services.memberships import MembershipService
 from ..services.projection import ProjectionService, SyncResult, identity_user_id
+from ..services.projects import ProjectService
 from ..services.reconcile import ReconcileService
 from ..services.transfers import TransferService
 from ..util import new_id
@@ -65,7 +68,8 @@ class SchedulerJobs:
 
     async def _expiry_transfers(self, expired: dict[str, list[str]], actor: str) -> int:
         """Run ownership transfer for users whose access fully lapsed (no remaining
-        active/scheduled memberships), matching rules against the groups that lapsed.
+        active/scheduled memberships and no managed group), matching rules against the
+        groups that lapsed.
         Runs once per lapse: the memberships are expired now, so later sweeps skip them."""
         transfer_svc = TransferService(self.ctx)
         records = 0
@@ -73,7 +77,8 @@ class SchedulerJobs:
             remaining = await self.ctx.app_db.memberships.count_documents(
                 {"userId": user_id, "status": {"$in": ["active", "scheduled"]}}
             )
-            if remaining:
+            # managers keep member access to the groups they manage
+            if remaining or await self.ctx.app_db.groups.count_documents({"managers": user_id}):
                 continue
             try:
                 batch = await transfer_svc.transfer_for_user(
@@ -84,6 +89,11 @@ class SchedulerJobs:
                 continue
             records += len(batch.records)
         return records
+
+    async def project_cascade(self, actor: str = "system") -> dict[str, Any]:
+        result = await GrantService(self.ctx).cascade_all(actor)
+        result["movesRetried"] = await ProjectService(self.ctx).retry_incomplete()
+        return result
 
     async def reconcile(self, actor: str = "system"):
         result = await ReconcileService(self.ctx).reconcile(actor=actor)
@@ -203,6 +213,10 @@ class Scheduler:
         self._sched.add_job(
             self._guarded, "interval", args=[self.jobs.login_watch],
             seconds=self.ctx.settings.login_watch_seconds, id="login-watch",
+        )
+        self._sched.add_job(
+            self._guarded, "interval", args=[self.jobs.project_cascade],
+            seconds=self.ctx.settings.project_cascade_seconds, id="project-cascade",
         )
         self._sched.start()
         logger.info("scheduler started (owner=%s)", self._owner)

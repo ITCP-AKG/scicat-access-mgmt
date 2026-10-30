@@ -3,16 +3,24 @@ import { Alert, Box, Button, Chip, Paper, Snackbar, Stack, Typography } from '@m
 import { DataGrid, type GridColDef } from '@mui/x-data-grid';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import UserPicker from '../components/UserPicker';
-import { UsersApi } from '../api/endpoints';
+import InviteDialog from '../components/InviteDialog';
+import { GroupsApi, UsersApi } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import type { DirectoryUser } from '../api/types';
 
-// View a user's group memberships (the user-centric side of US2) + departure (US6).
+// View a user's group memberships (the user-centric side of US2) + departure (US6), and
+// invite people (by e-mail) to the groups the caller manages.
 export default function UserGroupsPage() {
   const { me } = useAuth();
   const qc = useQueryClient();
   const [user, setUser] = useState<DirectoryUser | null>(null);
+  const [inviting, setInviting] = useState(false);
+  const isAdmin = !!me?.isAdmin;
+  const allGroups = useQuery({ queryKey: ['groups'], queryFn: () => GroupsApi.list(), enabled: isAdmin });
+  const invitableGroups = isAdmin
+    ? (allGroups.data ?? []).filter((g) => g.status === 'active').map((g) => g.name)
+    : me?.managerOf ?? [];
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { data: memberships = [], isLoading } = useQuery({
@@ -52,9 +60,12 @@ export default function UserGroupsPage() {
 
   return (
     <Box>
-      <Typography variant="h5" mb={2}>
-        Users
-      </Typography>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
+        <Typography variant="h5">Users</Typography>
+        <Button variant="contained" disabled={invitableGroups.length === 0} onClick={() => setInviting(true)}>
+          Invite
+        </Button>
+      </Stack>
       <Paper sx={{ p: 2, mb: 2 }}>
         <Stack spacing={1} maxWidth={480}>
           <Typography variant="subtitle2">Find a user to see their groups</Typography>
@@ -110,6 +121,7 @@ export default function UserGroupsPage() {
           />
         </div>
       )}
+      {inviting && <InviteDialog groups={invitableGroups} onClose={() => setInviting(false)} />}
       <Snackbar open={!!toast} autoHideDuration={5000} onClose={() => setToast(null)} message={toast ?? ''} />
     </Box>
   );

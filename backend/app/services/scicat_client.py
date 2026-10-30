@@ -236,3 +236,35 @@ class ScicatClient:
                 resp.status_code,
             )
         return resp.json()
+
+    # ---- attachments (sub-resources of proposals, samples and datasets) ----
+    # SciCat v4.3.1 serves them only under their parent (`/{parent}/{id}/attachments`);
+    # reads are not filtered per attachment, so only their ownerGroup (write rights)
+    # follows the parent.
+
+    async def list_attachments(self, resource_type: str, rid: str) -> list[dict[str, Any]]:
+        resp = await self._authed("GET", f"{self._item_path(resource_type, rid)}/attachments")
+        if resp.status_code != 200:
+            raise ScicatError(
+                f"list attachments of {resource_type}/{rid} failed: {resp.status_code}",
+                resp.status_code,
+            )
+        return resp.json() or []
+
+    async def patch_attachment(
+        self, resource_type: str, rid: str, aid: str, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        path = f"{self._item_path(resource_type, rid)}/attachments/{quote(aid, safe='')}"
+        resp = await self._authed("PATCH", path, json=body)
+        if resp.status_code not in (200, 201):
+            raise ScicatError(
+                f"patch attachment {aid} of {resource_type}/{rid} failed: {resp.status_code} "
+                f"{resp.text[:300]}",
+                resp.status_code,
+            )
+        return resp.json()
+
+
+def attachment_id(doc: dict[str, Any]) -> str:
+    return str(doc.get("id") or doc.get("_id") or doc.get("aid") or "")
+

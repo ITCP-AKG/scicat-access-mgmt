@@ -48,14 +48,25 @@ PATCHABLE: dict[str, set[str]] = {
 }
 
 
+def _lookup(doc: dict, key: str):
+    """A field by its (dotted) path, None if missing."""
+    value = doc
+    for part in key.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
+
+
 def _matches(doc: dict, where: dict) -> bool:
-    """Tiny Mongo-ish matcher covering what the app sends: equality, $in, $or, $regex."""
+    """Tiny Mongo-ish matcher covering what the app sends: equality (dotted paths too),
+    $in, $or, $regex."""
     for key, cond in where.items():
         if key == "$or":
             if not any(_matches(doc, sub) for sub in cond):
                 return False
             continue
-        value = doc.get(key)
+        value = _lookup(doc, key)
         if isinstance(cond, dict):
             if "$in" in cond:
                 values = value if isinstance(value, list) else [value]
@@ -108,6 +119,8 @@ class FakeScicat(ScicatClient):
         self.fail_ids: set[str] = set()
         self.fail_patch_ids: set[str] = set()  # GET works, PATCH is refused (503)
         self.patches: list[tuple[str, str, dict]] = []
+        # (parent type, parent id) -> attachments (served under their parent, like SciCat)
+        self.attachments: dict[tuple[str, str], list[dict]] = {}
         self.whoami_calls = 0
         self.identity_col = None  # set by the ctx fixture
 
@@ -159,6 +172,23 @@ class FakeScicat(ScicatClient):
             raise ScicatError(f"create {resource_type} failed: 409 duplicate {rid}", 409)
         self.resources[(resource_type, rid)] = copy.deepcopy(body)
         return copy.deepcopy(body)
+
+    def seed_attachment(self, resource_type: str, resource_id: str, aid: str, **fields) -> None:
+        self.attachments.setdefault((resource_type, resource_id), []).append({"id": aid, **fields})
+
+    async def list_attachments(self, resource_type: str, resource_id: str):
+        if (resource_type, resource_id) not in self.resources:
+            raise ScicatError(f"list attachments of {resource_type}/{resource_id}: 404", 404)
+        return copy.deepcopy(self.attachments.get((resource_type, resource_id), []))
+
+    async def patch_attachment(self, resource_type, resource_id, aid, body):
+        if aid in self.fail_patch_ids:
+            raise ScicatUnavailable(f"patch attachment {aid} failed: 503", 503)
+        for att in self.attachments.get((resource_type, resource_id), []):
+            if att["id"] == aid:
+                att.update(copy.deepcopy(body))
+                return copy.deepcopy(att)
+        raise ScicatError(f"patch attachment {aid}: 404", 404)
 
     async def list_resources(
         self, resource_type, where=None, *, limit=50, skip=0, order=None
